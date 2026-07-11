@@ -1,4 +1,5 @@
 #include "app/ui_shell/host_bridge.hpp"
+#include "app/ui_shell/tray_status_snapshot.hpp"
 #include "app/ui_shell/ui_window.hpp"
 #include "app/ui_shell/window_layout.hpp"
 
@@ -55,8 +56,8 @@ const char *bridge_script() {
     vpn: {
       connect: (password) => rpc('vpn.connect', { password }),
       disconnect: () => rpc('vpn.disconnect'),
-      connectElevated: (password) => rpc('vpn.connect', { password, allow_direct_fallback: true }),
-      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend, allow_direct_fallback: true }),
+      connectElevated: (password) => rpc('vpn.connect', { password }),
+      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend }),
       authInteraction: () => rpc('vpn.authInteraction.get'),
       respondAuthInteraction: (id, value) => rpc('vpn.authInteraction.respond', { id, value }),
     },
@@ -122,7 +123,7 @@ const char *bridge_script() {
       },
     },
     core: {
-      restart: () => unsupported('core.restart'),
+      restart: () => rpc('core.restart'),
       quit: () => { window.close(); return Promise.resolve(); },
     },
   };
@@ -193,6 +194,37 @@ std::string renderer_uri(const exv::ui_shell::RendererAssets &renderer) {
 [[nodiscard]] exv::ui_shell::WindowBounds
 webkitgtk_default_window_bounds() noexcept;
 
+struct WebKitGtkTrayMenuItem {
+  std::string label;
+  int command_id;
+  bool separator;
+  bool enabled;
+};
+
+constexpr int kTrayCommandShow = 3001;
+constexpr int kTrayCommandQuit = 3002;
+constexpr int kTrayCommandDisconnect = 3003;
+
+bool webkitgtk_supports_start_hidden_contract() noexcept {
+  return true;
+}
+
+std::vector<WebKitGtkTrayMenuItem> webkitgtk_tray_menu_model(
+    const exv::ui_shell::TrayStatusSnapshot &snapshot) {
+  std::vector<WebKitGtkTrayMenuItem> items;
+  for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
+           snapshot)) {
+    items.push_back({label, 0, false, false});
+  }
+  items.push_back({"", 0, true, false});
+  items.push_back({"断开连接", kTrayCommandDisconnect, false,
+                   snapshot.connected});
+  items.push_back({"显示 EXV", kTrayCommandShow, false, true});
+  items.push_back({"", 0, true, false});
+  items.push_back({"退出", kTrayCommandQuit, false, true});
+  return items;
+}
+
 #if defined(EXV_BUILD_UI_SHELL)
 class WebKitGtkWindow final : public exv::ui_shell::UiWindow {
 public:
@@ -219,7 +251,9 @@ public:
     }
 
     running_ = true;
-    gtk_widget_show_all(window_);
+    if (!config.start_hidden) {
+      gtk_widget_show_all(window_);
+    }
     pump_source_id_ = g_timeout_add(15, &WebKitGtkWindow::on_pump_tick, this);
     gtk_main();
 
@@ -386,6 +420,14 @@ private:
     }
     if (owner->active_config_.pump_core_events) {
       owner->active_config_.pump_core_events();
+    }
+    if (owner->active_config_.poll_wake_requests) {
+      owner->active_config_.poll_wake_requests([owner]() {
+        if (owner->window_ != nullptr) {
+          gtk_widget_show_all(owner->window_);
+          gtk_window_present(GTK_WINDOW(owner->window_));
+        }
+      });
     }
     return G_SOURCE_CONTINUE;
   }

@@ -60,3 +60,8 @@ webui/electron-shot*.png
 bash/
 cminst.sh
 walkthrough.md
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+.codegraph/

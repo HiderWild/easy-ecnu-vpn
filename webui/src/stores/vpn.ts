@@ -423,6 +423,66 @@ const contractErrorMap: Record<string, NativeErrorDescriptor> = {
     recommended_action: 'view_logs',
     recoverable: true,
   },
+  transport_closed: {
+    error_type: 'native_failure',
+    message: '核心进程连接已关闭，可由程序重启内核后重试。',
+    recommended_action: 'restart_core',
+    recoverable: true,
+  },
+  core_comm_broken: {
+    error_type: 'native_failure',
+    message: '核心进程通信已中断，可由程序重启内核后重试。',
+    recommended_action: 'restart_core',
+    recoverable: true,
+  },
+  core_unresponsive: {
+    error_type: 'native_failure',
+    message: '核心进程无响应，可由程序重启内核后重试。',
+    recommended_action: 'restart_core',
+    recoverable: true,
+  },
+  core_restart_required: {
+    error_type: 'native_failure',
+    message: '核心进程需要重启后才能继续。',
+    recommended_action: 'restart_core',
+    recoverable: true,
+  },
+  core_restart_failed: {
+    error_type: 'native_failure',
+    message: '核心进程重启失败，请稍后重试或重新打开客户端。',
+    recommended_action: 'restart_core',
+    recoverable: true,
+  },
+  elevation_denied: {
+    error_type: 'permission_denied',
+    message: '管理员授权已取消，请允许 UAC 提权后重试。',
+    recommended_action: 'retry',
+    recoverable: true,
+  },
+  launch_failed: {
+    error_type: 'native_failure',
+    message: '启动提权安装进程失败，请以管理员身份重新运行安装。',
+    recommended_action: 'reinstall_helper',
+    recoverable: true,
+  },
+  helper_not_found: {
+    error_type: 'native_failure',
+    message: '未找到 exv-helper.exe，请重新安装客户端。',
+    recommended_action: 'reinstall_helper',
+    recoverable: true,
+  },
+  service_installed_not_running: {
+    error_type: 'helper_unavailable',
+    message: '服务已安装但无法启动，请尝试修复或重新安装服务。',
+    recommended_action: 'reinstall_helper',
+    recoverable: true,
+  },
+  vpn_disconnect_timeout: {
+    error_type: 'native_failure',
+    message: '断开当前 VPN 会话超时，请稍后重试安装。',
+    recommended_action: 'retry',
+    recoverable: true,
+  },
 }
 
 // Raw backend codes that historically have not gone through
@@ -455,6 +515,15 @@ function truncateMessage(message: string) {
   return message.length > 96 ? `${message.slice(0, 96)}...` : message
 }
 
+function isCoreTransportFailureMessage(message: string, lower = message.toLowerCase()) {
+  return message.includes('Core RPC transport is closed') ||
+    lower.includes('transport_closed') ||
+    lower.includes('core_comm_broken') ||
+    lower.includes('core_unresponsive') ||
+    lower.includes('core_restart_required') ||
+    lower.includes('core restart is required')
+}
+
 function localizedRawError(message: string): Pick<VpnError, 'error_type' | 'message' | 'recoverable' | 'recommended_action'> {
   const normalized = stripRemoteErrorPrefix(message)
   const lower = normalized.toLowerCase()
@@ -474,12 +543,12 @@ function localizedRawError(message: string): Pick<VpnError, 'error_type' | 'mess
       recommended_action: 'retry_password',
     }
   }
-  if (normalized.includes('Core RPC transport is closed')) {
+  if (isCoreTransportFailureMessage(normalized, lower)) {
     return {
       error_type: 'native_failure',
-      message: '核心进程连接已关闭，请退出并重新打开客户端后重试。',
+      message: contractErrorMap.transport_closed.message,
       recoverable: true,
-      recommended_action: 'restart_app',
+      recommended_action: 'restart_core',
     }
   }
   if (normalized.includes('Failed to start elevated one-shot helper.')) {

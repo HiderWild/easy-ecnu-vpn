@@ -17,6 +17,7 @@
 #include "core/tunnel_controller/timing.hpp"
 #include "core/tunnel_controller/tunnel_controller.hpp"
 #include "core/tunnel_controller/vpn_connect_job.hpp"
+#include "core/use_cases/tunnel_use_cases.hpp"
 #include "helper/common/helper_client.hpp"
 #include "helper/common/helper_connector.hpp"
 #include "observability/log_facade.hpp"
@@ -68,10 +69,10 @@ namespace {
 
 using StageTimer = exv::core::ConnectStageTimer;
 
-std::mutex g_desktop_connect_error_mutex;
-std::optional<nlohmann::json> g_desktop_connect_error;
-std::mutex g_desktop_connect_jobs_mutex;
-exv::core::VpnConnectJobOwner g_desktop_connect_jobs;
+// The connect-job owner and connect-error state were relocated to
+// exv::core::TunnelUseCases so that the use-case layer owns all tunnel runtime
+// state.  The file-local helper functions below delegate to the shared
+// tunnel_use_cases() singleton.
 
 config::ConfigManager make_config_manager() {
   platform::ensure_dir(platform::get_config_dir());
@@ -211,18 +212,15 @@ nlohmann::json connect_state_json(const exv::core::VpnConnectJobState &state) {
 }
 
 void clear_desktop_connect_error() {
-  std::lock_guard<std::mutex> lock(g_desktop_connect_error_mutex);
-  g_desktop_connect_error.reset();
+  exv::core::tunnel_use_cases().clear_connect_error();
 }
 
 void set_desktop_connect_error(nlohmann::json failure) {
-  std::lock_guard<std::mutex> lock(g_desktop_connect_error_mutex);
-  g_desktop_connect_error = std::move(failure);
+  exv::core::tunnel_use_cases().set_connect_error(std::move(failure));
 }
 
 std::optional<nlohmann::json> desktop_connect_error() {
-  std::lock_guard<std::mutex> lock(g_desktop_connect_error_mutex);
-  return g_desktop_connect_error;
+  return exv::core::tunnel_use_cases().connect_error();
 }
 
 struct PreparedHandshakeHolder {
@@ -262,7 +260,7 @@ void apply_desktop_connect_error(nlohmann::json *status) {
 
 void apply_desktop_connect_job_status(nlohmann::json *status) {
   if (!status) return;
-  auto state = g_desktop_connect_jobs.snapshot();
+  auto state = exv::core::tunnel_use_cases().connect_jobs().snapshot();
   if (!state.active || !state.desired_connected) {
     return;
   }
@@ -683,10 +681,7 @@ nlohmann::json auth_interaction_json(
 void shutdown_desktop_vpn_runtime() {
   exv::observability::LogFacade::info(
       "app_api: Shutting down desktop VPN runtime");
-  {
-    std::lock_guard<std::mutex> lock(g_desktop_connect_jobs_mutex);
-    g_desktop_connect_jobs.shutdown("core_shutdown");
-  }
+  exv::core::tunnel_use_cases().shutdown_connect_jobs("core_shutdown");
 
   if (auto coordinator = get_active_connect_auth_coordinator(); coordinator) {
     coordinator->cancel();
@@ -764,10 +759,12 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         pending.has_password = !password.empty();
 
         {
-          std::lock_guard<std::mutex> lock(g_desktop_connect_jobs_mutex);
-          auto active = g_desktop_connect_jobs.snapshot();
+          auto &tuc = exv::core::tunnel_use_cases();
+          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
+          auto &jobs = tuc.connect_jobs();
+          auto active = jobs.snapshot();
           if (active.active) {
-            auto state = g_desktop_connect_jobs.submit_connect(
+            auto state = jobs.submit_connect(
                 pending,
                 [cfg, password](std::stop_token stop, std::uint64_t) mutable {
                   if (stop.stop_requested()) return;
@@ -850,8 +847,9 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         auto attempt_id = attempt_result.record.attempt_id;
         exv::core::VpnConnectJobState state;
         {
-          std::lock_guard<std::mutex> lock(g_desktop_connect_jobs_mutex);
-          state = g_desktop_connect_jobs.submit_connect(
+          auto &tuc = exv::core::tunnel_use_cases();
+          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
+          state = tuc.connect_jobs().submit_connect(
               pending,
               [cfg, password, attempt_id](std::stop_token stop,
                                           std::uint64_t) mutable {
@@ -937,11 +935,12 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         Config cfg = mgr.load();
         auto controller = get_tunnel_controller_if_exists();
         {
-          std::lock_guard<std::mutex> lock(g_desktop_connect_jobs_mutex);
-          auto active = g_desktop_connect_jobs.snapshot();
+          auto &tuc = exv::core::tunnel_use_cases();
+          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
+          auto active = tuc.connect_jobs().snapshot();
           if (active.active) {
             auto state =
-                g_desktop_connect_jobs.submit_disconnect("user_cancelled_connect");
+                tuc.connect_jobs().submit_disconnect("user_cancelled_connect");
             clear_desktop_connect_error();
             return connect_state_json(state);
           }

@@ -44,7 +44,7 @@ public:
         path.c_str(),
         PIPE_ACCESS_DUPLEX,
         PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-        1, 65536, 65536, 0, &security_attributes);
+        PIPE_UNLIMITED_INSTANCES, 65536, 65536, 0, &security_attributes);
 
     if (security_descriptor) {
       LocalFree(security_descriptor);

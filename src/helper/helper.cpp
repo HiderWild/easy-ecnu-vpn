@@ -6,6 +6,8 @@
 #include "helper/helper.hpp"
 #include "helper/helper_daemon_context.hpp"
 #include "helper/helper_ipc.hpp"
+#include "helper/helper_lane_scheduler.hpp"
+#include "helper/helper_single_instance.hpp"
 
 #include "helper/common/helper_messages.hpp"
 #include "helper/helper_handler.hpp"
@@ -21,6 +23,7 @@
 #include <csignal>
 #include <cstring>
 #include <chrono>
+#include <future>
 #include <limits>
 #include <sstream>
 #include <string>
@@ -249,6 +252,20 @@ int daemon_main(const DaemonOptions &options) {
 
   exv::observability::LogFacade::info("Helper daemon starting (mode=" + options.mode + ")");
 
+  // Single-instance assertion: refuse to start if another helper of the same
+  // kind is already running. The handle is held for the lifetime of daemon_main
+  // and released on return.
+  exv::helper::HelperInstanceKind instance_kind =
+      options.oneshot ? exv::helper::HelperInstanceKind::Oneshot
+                      : exv::helper::HelperInstanceKind::Service;
+  auto single_instance = exv::helper::acquire_single_instance(instance_kind);
+  if (!single_instance) {
+    exv::observability::LogFacade::error(
+        "Another helper instance is already running; exiting to avoid "
+        "multi-instance drift.");
+    return 1;
+  }
+
   auto ipc = helper::create_ipc_server();
   if (!ipc || !ipc->start(options.endpoint)) {
     exv::observability::LogFacade::error("Failed to open helper IPC endpoint: " + options.endpoint);
@@ -256,6 +273,17 @@ int daemon_main(const DaemonOptions &options) {
   }
 
   auto handler = create_helper_handler_for_daemon(options);
+
+  // Lane scheduler: dispatch each helper request onto the lane appropriate for
+  // its op so a slow Tunnel-lane operation (ApplyTunnelConfig etc.) does not
+  // block Hello / Heartbeat / lease lifecycle on other lanes. Same-lane ops
+  // remain serialized so the managed network state never races.
+  exv::helper::HelperLaneScheduler lane_scheduler;
+  if (!lane_scheduler.start()) {
+    exv::observability::LogFacade::error("Failed to start helper lane scheduler");
+    return 1;
+  }
+
   std::thread maintenance_thread([&] {
     while (!daemon_stop_requested) {
       for (int i = 0; i < 150 && !daemon_stop_requested; ++i) {
@@ -268,6 +296,7 @@ int daemon_main(const DaemonOptions &options) {
       if (options.oneshot && options.parent_pid > 0 &&
           !platform::is_process_alive(options.parent_pid)) {
         exv::observability::LogFacade::info("Helper oneshot parent disappeared; cleaning up and exiting");
+        handler->mark_shutdown(exv::helper::HelperExitReason::Timeout);
         if (cleanup_all_sessions_or_keep_running(*handler, "parent exit")) {
           daemon_stop_requested = 1;
         }
@@ -353,8 +382,33 @@ int daemon_main(const DaemonOptions &options) {
             break;
           }
 
-          exv::helper::HelperResponse helper_resp =
-              handler->handle(helper_req, request_context);
+          exv::helper::HelperResponse helper_resp;
+          {
+            std::promise<exv::helper::HelperResponse> promise;
+            std::future<exv::helper::HelperResponse> future = promise.get_future();
+            exv::helper::HelperLaneItem item;
+            item.request = helper_req;
+            item.context = request_context;
+            item.handler =
+                [handler_ptr = handler.get()](
+                    const exv::helper::HelperRequest &req,
+                    const exv::helper::HelperRequestContext &ctx) {
+                  return handler_ptr->handle(req, ctx);
+                };
+            item.respond =
+                [&promise](exv::helper::HelperResponse resp) {
+                  promise.set_value(std::move(resp));
+                };
+            if (!lane_scheduler.schedule(std::move(item))) {
+              helper_resp.op = helper_req.op;
+              helper_resp.success = false;
+              helper_resp.error_code = "scheduler_stopped";
+              helper_resp.error_message =
+                  "Helper lane scheduler is not accepting work";
+            } else {
+              helper_resp = future.get();
+            }
+          }
           nlohmann::json resp_json = helper_resp;
           ipc->send_response(resp_json.dump());
           first_request = false;
@@ -412,6 +466,7 @@ int daemon_main(const DaemonOptions &options) {
   if (maintenance_thread.joinable()) {
     maintenance_thread.join();
   }
+  lane_scheduler.stop();
   ipc->close();
   platform::cleanup_daemon_endpoint(active_daemon_options.endpoint);
   return 0;

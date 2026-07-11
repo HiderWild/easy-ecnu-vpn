@@ -69,6 +69,10 @@ bool PipeIpcListener::start() {
     LocalFree(security_descriptor);
   }
   if (impl_->pipe_handle == INVALID_HANDLE_VALUE) {
+    const DWORD error = GetLastError();
+    exv::observability::LogFacade::error(
+        "Pipe IPC listener failed to bind Windows named pipe '" + impl_->path +
+        "' GetLastError=" + std::to_string(error));
     return false;
   }
   return true;

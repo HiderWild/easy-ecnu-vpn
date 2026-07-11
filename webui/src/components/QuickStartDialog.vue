@@ -2,6 +2,7 @@
 import { computed, ref, watch } from 'vue'
 import { FileUp, Rocket, Settings2 } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
+import PasswordField from './PasswordField.vue'
 import TokenInput from './TokenInput.vue'
 import { distributionConfig } from '../generated/distribution'
 import { useConfigStore } from '../stores/config'
@@ -35,6 +36,7 @@ const panelSize = computed(() => mode.value === 'custom' ? 'lg' : 'md')
 const defaultServer = computed(() => ui.quickStartRequest?.defaults.server || distributionConfig.defaultVpnServer)
 const shouldInstallService = computed(() => ui.quickStartRequest?.defaults.install_service ?? true)
 const rememberPasswordEnabled = computed(() => password.value.length > 0)
+const showSavedPasswordOverwriteHint = computed(() => Boolean(config.authConfig.password_stored))
 const quickStartDescription = computed(() =>
   ui.quickStartRequest?.reason === 'invalid'
     ? '配置文件不完整，已重新初始化。'
@@ -45,9 +47,6 @@ watch(
   () => ui.showQuickStart,
   async (visible) => {
     if (!visible) return
-    if (config.settings.minimal_mode) {
-      await config.saveSettings({ minimal_mode: false })
-    }
     mode.value = 'quick'
     error.value = ''
     username.value = ''
@@ -236,11 +235,11 @@ async function onImportFile(event: Event) {
       </label>
       <label class="block">
         <span class="mb-1 block text-xs font-medium text-muted">密码</span>
-        <input
+        <PasswordField
           v-model="password"
-          class="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-foreground outline-none focus:border-primary"
-          type="password"
+          input-class="w-full rounded-lg border border-border bg-bg px-3 py-2 pr-11 text-sm text-foreground outline-none focus:border-primary"
           autocomplete="current-password"
+          :show-saved-password-overwrite-hint="showSavedPasswordOverwriteHint"
           @input="error = ''"
         />
       </label>

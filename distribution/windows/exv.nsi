@@ -49,6 +49,12 @@ Var FinishCreateDesktopShortcut
 Var FinishLaunchApp
 Var FinishCreateDesktopShortcutCheckbox
 Var FinishLaunchAppCheckbox
+Var UninstallClearUserData
+Var UninstallClearUserDataCheckbox
+
+Function un.onInit
+  StrCpy $UninstallClearUserData ${BST_UNCHECKED}
+FunctionEnd
 
 Function DetectHelperServiceBeforeInstall
   StrCpy $HadHelperService 0
@@ -110,6 +116,50 @@ Function RunHelperServicePostInstallRepair
   StrCmp $HadHelperService 1 0 done
   IfFileExists "$INSTDIR\bin\exv.exe" 0 done
     nsExec::ExecToLog `"$INSTDIR\bin\exv.exe" desktop-rpc service.install "{}"`
+  done:
+FunctionEnd
+
+Function WriteHelperProcessCleanupScript
+  InitPluginsDir
+  FileOpen $0 "$PLUGINSDIR\exv-helper-process-cleanup.ps1" w
+  FileWrite $0 "$$ErrorActionPreference = 'SilentlyContinue'$\r$\n"
+  FileWrite $0 "$$deadline = (Get-Date).AddSeconds(15)$\r$\n"
+  FileWrite $0 "$$remaining = @()$\r$\n"
+  FileWrite $0 "do {$\r$\n"
+  FileWrite $0 "  Stop-Process -Name exv-helper -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "  Start-Sleep -Milliseconds 300$\r$\n"
+  FileWrite $0 "  $$remaining = @(Get-Process -Name exv-helper -ErrorAction SilentlyContinue)$\r$\n"
+  FileWrite $0 "} while ($$remaining.Count -gt 0 -and (Get-Date) -lt $$deadline)$\r$\n"
+  FileWrite $0 "if ($$remaining.Count -gt 0) { exit 1 }$\r$\n"
+  FileWrite $0 "exit 0$\r$\n"
+  FileClose $0
+FunctionEnd
+
+Function RunHelperProcessCleanup
+  Call WriteHelperProcessCleanupScript
+  nsExec::ExecToStack `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\exv-helper-process-cleanup.ps1"`
+  Pop $0
+  Pop $1
+  StrCmp $0 0 done
+    nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"$PLUGINSDIR\exv-helper-process-cleanup.ps1\"'"`
+  done:
+  nsExec::ExecToLog `taskkill.exe /IM exv-helper.exe /T /F`
+  Pop $0
+FunctionEnd
+
+Function ExtractLegacyCompatibilityCleanupScript
+  InitPluginsDir
+  File /oname=$PLUGINSDIR\clear-windows-legacy-state.ps1 "${SOURCE_DIR}\support\clear-windows-legacy-state.ps1"
+FunctionEnd
+
+Function RunLegacyCompatibilityCleanup
+  Call ExtractLegacyCompatibilityCleanupScript
+  nsExec::ExecToStack `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\clear-windows-legacy-state.ps1" -CurrentInstallDir "$INSTDIR"`
+  Pop $0
+  Pop $1
+  StrCmp $0 0 done
+    nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"$PLUGINSDIR\clear-windows-legacy-state.ps1\" -CurrentInstallDir \"$INSTDIR\"'"`
+    Pop $0
   done:
 FunctionEnd
 
@@ -207,6 +257,45 @@ Function un.WaitForHelperServiceRemoval
   done:
 FunctionEnd
 
+Function un.WriteHelperProcessCleanupScript
+  InitPluginsDir
+  FileOpen $0 "$PLUGINSDIR\exv-helper-process-cleanup.ps1" w
+  FileWrite $0 "$$ErrorActionPreference = 'SilentlyContinue'$\r$\n"
+  FileWrite $0 "$$deadline = (Get-Date).AddSeconds(15)$\r$\n"
+  FileWrite $0 "$$remaining = @()$\r$\n"
+  FileWrite $0 "do {$\r$\n"
+  FileWrite $0 "  Stop-Process -Name exv-helper -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "  Start-Sleep -Milliseconds 300$\r$\n"
+  FileWrite $0 "  $$remaining = @(Get-Process -Name exv-helper -ErrorAction SilentlyContinue)$\r$\n"
+  FileWrite $0 "} while ($$remaining.Count -gt 0 -and (Get-Date) -lt $$deadline)$\r$\n"
+  FileWrite $0 "if ($$remaining.Count -gt 0) { exit 1 }$\r$\n"
+  FileWrite $0 "exit 0$\r$\n"
+  FileClose $0
+FunctionEnd
+
+Function un.RunHelperProcessCleanup
+  Call un.WriteHelperProcessCleanupScript
+  nsExec::ExecToStack `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\exv-helper-process-cleanup.ps1"`
+  Pop $0
+  Pop $1
+  StrCmp $0 0 done
+    nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"$PLUGINSDIR\exv-helper-process-cleanup.ps1\"'"`
+  done:
+  nsExec::ExecToLog `taskkill.exe /IM exv-helper.exe /T /F`
+  Pop $0
+FunctionEnd
+
+Function un.RunLegacyCompatibilityCleanup
+  IfFileExists "$INSTDIR\support\clear-windows-legacy-state.ps1" 0 done
+    nsExec::ExecToStack `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\support\clear-windows-legacy-state.ps1" -CurrentInstallDir "$INSTDIR"`
+    Pop $0
+    Pop $1
+    StrCmp $0 0 done
+      nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -Command "Start-Process -FilePath powershell.exe -Verb RunAs -Wait -ArgumentList '-NoProfile -ExecutionPolicy Bypass -File \"$INSTDIR\support\clear-windows-legacy-state.ps1\" -CurrentInstallDir \"$INSTDIR\"'"`
+      Pop $0
+  done:
+FunctionEnd
+
 Function un.WriteAppProcessCleanupScript
   InitPluginsDir
   FileOpen $0 "$PLUGINSDIR\exv-app-process-cleanup.ps1" w
@@ -270,6 +359,19 @@ Function un.RunHelperServiceUninstallMaintenance
   done:
 FunctionEnd
 
+Function un.RemoveStableHelperPayload
+  RMDir /r "$INSTDIR\exv-ui.exe.WebView2"
+  Delete "$LOCALAPPDATA\EXV\Helper\exv-helper.exe"
+  RMDir "$LOCALAPPDATA\EXV\Helper"
+FunctionEnd
+
+Function un.RunUserDataCleanup
+  StrCmp $UninstallClearUserData ${BST_CHECKED} 0 done
+  IfFileExists "$INSTDIR\support\clear-local-user-config.ps1" 0 done
+    nsExec::ExecToLog `powershell.exe -NoProfile -ExecutionPolicy Bypass -File "$INSTDIR\support\clear-local-user-config.ps1" -Force -IncludeCredentialManager`
+  done:
+FunctionEnd
+
 Function FinishOptionsPage
   !insertmacro MUI_HEADER_TEXT "安装完成" "EXV 已安装到此电脑。"
   nsDialogs::Create 1018
@@ -300,11 +402,31 @@ Function FinishOptionsLeave
   ${EndIf}
 FunctionEnd
 
+Function un.UninstallOptionsPage
+  !insertmacro MUI_HEADER_TEXT "卸载选项" "选择是否同时清除当前用户数据。"
+  nsDialogs::Create 1018
+  Pop $0
+  ${If} $0 == error
+    Abort
+  ${EndIf}
+  ${NSD_CreateLabel} 0 0 100% 26u "卸载程序会移除 EXV 应用文件。勾选下面的选项后，还会清除当前用户的配置、日志、WebView2 数据和本地凭据。"
+  Pop $0
+  ${NSD_CreateCheckbox} 0 42u 100% 12u "清除用户数据"
+  Pop $UninstallClearUserDataCheckbox
+  ${NSD_SetState} $UninstallClearUserDataCheckbox ${BST_UNCHECKED}
+  nsDialogs::Show
+FunctionEnd
+
+Function un.UninstallOptionsLeave
+  ${NSD_GetState} $UninstallClearUserDataCheckbox $UninstallClearUserData
+FunctionEnd
+
 !insertmacro MUI_PAGE_WELCOME
 !insertmacro MUI_PAGE_DIRECTORY
 !insertmacro MUI_PAGE_INSTFILES
 Page custom FinishOptionsPage FinishOptionsLeave
 !insertmacro MUI_UNPAGE_CONFIRM
+UninstPage custom un.UninstallOptionsPage un.UninstallOptionsLeave
 !insertmacro MUI_UNPAGE_INSTFILES
 !insertmacro MUI_LANGUAGE "SimpChinese"
 
@@ -313,10 +435,15 @@ Section "Install"
   Call StopRunningAppProcesses
   Call DetectHelperServiceBeforeInstall
   Call RunHelperServicePreInstallMaintenance
+  Call RunHelperProcessCleanup
+  Call RunLegacyCompatibilityCleanup
+  SetOutPath "$INSTDIR\support"
+  File "${SOURCE_DIR}\support\clear-local-user-config.ps1"
+  File "${SOURCE_DIR}\support\clear-windows-legacy-state.ps1"
   SetOutPath "$INSTDIR"
+  WriteUninstaller "$INSTDIR\Uninstall.exe"
   File /r "${SOURCE_DIR}\*.*"
 
-  WriteUninstaller "$INSTDIR\Uninstall.exe"
   WriteRegStr HKCU "Software\EXV" "InstallDir" "$INSTDIR"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayName" "${APP_NAME}"
   WriteRegStr HKCU "${UNINSTALL_KEY}" "DisplayVersion" "${APP_VERSION}"
@@ -339,6 +466,11 @@ Section "Uninstall"
   SetShellVarContext current
   Call un.StopRunningAppProcesses
   Call un.RunHelperServiceUninstallMaintenance
+  Call un.RunHelperProcessCleanup
+  Call un.RunLegacyCompatibilityCleanup
+  Call un.RemoveStableHelperPayload
+  Call un.RunUserDataCleanup
+  RMDir "$LOCALAPPDATA\EXV"
   Delete "$DESKTOP\EXV.lnk"
   Delete "$SMPROGRAMS\EXV\EXV.lnk"
   Delete "$SMPROGRAMS\EXV\Uninstall EXV.lnk"

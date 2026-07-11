@@ -1,5 +1,6 @@
 #include "app/ui_shell/close_preference.hpp"
 #include "app/ui_shell/host_bridge.hpp"
+#include "app/ui_shell/tray_status_snapshot.hpp"
 #include "app/ui_shell/ui_window.hpp"
 #include "app/ui_shell/window_layout.hpp"
 
@@ -45,13 +46,30 @@ class WkWebViewWindow;
 @interface ExvUIDelegate : NSObject <WKUIDelegate>
 @end
 
-@interface ExvStatusItemTarget : NSObject {
+@interface ExvStatusItemTarget : NSObject <NSMenuDelegate> {
   exv::platform::darwin::ui_shell::WkWebViewWindow *owner_;
 }
 - (instancetype)initWithOwner:
     (exv::platform::darwin::ui_shell::WkWebViewWindow *)owner;
 - (void)showWindow:(id)sender;
+- (void)disconnectVpn:(id)sender;
 - (void)quitApp:(id)sender;
+- (void)menuNeedsUpdate:(NSMenu *)menu;
+@end
+
+// Application delegate so that the Dock's "Quit" (and Cmd-Q, logout, etc.) --
+// which arrive as the kAEQuitApplication Apple Event routed through
+// NSApplication's terminate flow -- actually tear the app down. Without a
+// delegate, AppKit's default terminate sequence never touches the manual
+// `running_` flag that gates the hand-rolled run loop, so the Dock Quit
+// silently does nothing. The status-item quit already works because it calls
+// quit_from_status_item() directly; this delegate routes the AppKit terminate
+// path through the same cleanup.
+@interface ExvAppDelegate : NSObject <NSApplicationDelegate> {
+  exv::platform::darwin::ui_shell::WkWebViewWindow *owner_;
+}
+- (instancetype)initWithOwner:
+    (exv::platform::darwin::ui_shell::WkWebViewWindow *)owner;
 @end
 #endif
 
@@ -136,8 +154,8 @@ NSString *bridge_script() {
     vpn: {
       connect: (password) => rpc('vpn.connect', { password }),
       disconnect: () => rpc('vpn.disconnect'),
-      connectElevated: (password) => rpc('vpn.connect', { password, allow_direct_fallback: true }),
-      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend, allow_direct_fallback: true }),
+      connectElevated: (password) => rpc('vpn.connect', { password }),
+      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend }),
     },
     config: {
       getAuth: () => rpc('config.getAuth'),
@@ -208,7 +226,7 @@ NSString *bridge_script() {
       },
     },
     core: {
-      restart: () => unsupported('core.restart'),
+      restart: () => rpc('core.restart'),
       quit: () => { window.close(); return Promise.resolve(); },
     },
   };
@@ -227,21 +245,35 @@ struct WkWebViewStatusMenuItem {
   std::string label;
   int command_id;
   bool separator;
+  bool enabled;
 };
 
 constexpr int kStatusCommandShow = 2001;
 constexpr int kStatusCommandQuit = 2002;
+constexpr int kStatusCommandDisconnect = 2003;
 
 bool wkwebview_should_create_status_item_on_start() {
   return true;
 }
 
+std::vector<WkWebViewStatusMenuItem>
+wkwebview_status_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
+  std::vector<WkWebViewStatusMenuItem> items;
+  for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
+           snapshot)) {
+    items.push_back({label, 0, false, false});
+  }
+  items.push_back({"", 0, true, false});
+  items.push_back({"断开连接", kStatusCommandDisconnect, false,
+                   snapshot.connected});
+  items.push_back({"显示 EXV", kStatusCommandShow, false, true});
+  items.push_back({"", 0, true, false});
+  items.push_back({"退出", kStatusCommandQuit, false, true});
+  return items;
+}
+
 std::vector<WkWebViewStatusMenuItem> wkwebview_status_menu_model() {
-  return {
-      {"显示 EXV", kStatusCommandShow, false},
-      {"", 0, true},
-      {"退出", kStatusCommandQuit, false},
-  };
+  return wkwebview_status_menu_model(exv::ui_shell::TrayStatusSnapshot{});
 }
 
 #if defined(EXV_BUILD_UI_SHELL)
@@ -264,7 +296,16 @@ public:
       renderer_ready_ = false;
 
       NSApplication *app = [NSApplication sharedApplication];
-      [app setActivationPolicy:NSApplicationActivationPolicyRegular];
+      [app setActivationPolicy:config.start_hidden
+                                   ? NSApplicationActivationPolicyAccessory
+                                   : NSApplicationActivationPolicyRegular];
+      // Install an application delegate so the Dock "Quit" / Cmd-Q / logout
+      // terminate flow reaches our cleanup path instead of being swallowed by
+      // the manual run loop.
+      if (app_delegate_ == nil) {
+        app_delegate_ = [[ExvAppDelegate alloc] initWithOwner:this];
+        [app setDelegate:app_delegate_];
+      }
       create_status_item();
 
       if (!create_window() || !load_renderer(config.renderer)) {
@@ -273,8 +314,10 @@ public:
       }
 
       running_ = true;
-      [window_ makeKeyAndOrderFront:nil];
-      [app activateIgnoringOtherApps:YES];
+      if (!config.start_hidden) {
+        [window_ makeKeyAndOrderFront:nil];
+        [app activateIgnoringOtherApps:YES];
+      }
 
       while (running_) {
         @autoreleasepool {
@@ -291,6 +334,10 @@ public:
           [app updateWindows];
           if (active_config_.pump_core_events) {
             active_config_.pump_core_events();
+          }
+          if (active_config_.poll_wake_requests) {
+            active_config_.poll_wake_requests(
+                [this]() { show_from_status_item(); });
           }
         }
       }
@@ -517,8 +564,20 @@ public:
 
   void show_from_status_item() {
     if (window_ == nil) return;
+    [[NSApplication sharedApplication]
+        setActivationPolicy:NSApplicationActivationPolicyRegular];
     [window_ makeKeyAndOrderFront:nil];
     [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
+  }
+
+  void disconnect_from_status_item() {
+    if (active_config_.disconnect_vpn_in_background) {
+      active_config_.disconnect_vpn_in_background();
+    }
+  }
+
+  void refresh_status_menu(NSMenu *menu) {
+    rebuild_status_menu(menu);
   }
 
   void quit_from_status_item() {
@@ -557,6 +616,31 @@ public:
       }
     } else if (resolution.action == "quit") {
       quit_from_status_item();
+    } else if (resolution.action == "smart") {
+      // "Smart" close: hide to the status-item tray, and if the VPN is
+      // not currently connected, quit immediately (mirrors the Windows
+      // `begin_smart_close_resolution` behavior, but evaluated
+      // synchronously on the main thread because the macOS shell runs
+      // a manual `nextEventMatchingMask` loop without a PostMessage
+      // channel to marshal a background-thread result back). The
+      // webui's close prompt defaults to `smart`, so without this
+      // branch the default choice fell through to `show_from_status_item`
+      // and the window refused to close.
+      bool connected = false;
+      if (active_config_.is_vpn_connected) {
+        try {
+          connected = active_config_.is_vpn_connected();
+        } catch (...) {
+          connected = false;
+        }
+      }
+      if (connected) {
+        if (window_ != nil) {
+          [window_ orderOut:nil];
+        }
+      } else {
+        quit_from_status_item();
+      }
     } else {
       show_from_status_item();
     }
@@ -600,8 +684,19 @@ private:
     [window_ setTitlebarAppearsTransparent:YES];
     [window_ setTitleVisibility:NSWindowTitleHidden];
     [window_ setMovableByWindowBackground:YES];
-    [window_ setOpaque:NO];
-    [window_ setBackgroundColor:[NSColor clearColor]];
+    // Solid dark backdrop matching the webui's `--color-bg` (#0f172a).
+    // The original `setOpaque:NO + clearColor` left every layer of the
+    // window transparent, so on macOS 26 the entire window read as
+    // empty space (only the system traffic-light buttons remained
+    // visible). Pairing `setOpaque:YES` with the matching dark color
+    // here lets the transparent WKWebView render the webui on top
+    // without any color flash between the WebKit subprocess painting
+    // and the webui mounting.
+    [window_ setOpaque:YES];
+    [window_ setBackgroundColor:[NSColor colorWithCalibratedRed:0.0588f
+                                                          green:0.0902f
+                                                           blue:0.1647f
+                                                          alpha:1.0f]];
     [window_ center];
     [window_ setContentMinSize:NSMakeSize(bounds.width, bounds.height)];
     [window_ setContentMaxSize:NSMakeSize(bounds.width, bounds.height)];
@@ -611,6 +706,32 @@ private:
 
     WKWebViewConfiguration *configuration =
         [[[WKWebViewConfiguration alloc] init] autorelease];
+    // Let a file:// document fetch file:// subresources so the Vite
+    // ES-module bundle (loaded via `<script type="module">` after the
+    // packaging step strips the `crossorigin` attribute) can resolve
+    // its `import` targets and the Vue app actually mounts. Without
+    // this, `<script type="module">` under a file:// origin is silently
+    // rejected by the same-origin policy and `#app` stays empty (no
+    // error, no console message).
+    //
+    // The two keys live on DIFFERENT objects and must not be swapped:
+    //   - `allowFileAccessFromFileURLs`  -> WKPreferences
+    //   - `allowUniversalAccessFromFileURLs` -> WKWebViewConfiguration
+    // Setting the second one on WKPreferences raises
+    // NSUnknownKeyException on macOS 26 and crashes the shell, so each
+    // set is guarded with @try/@catch.
+    @try {
+      [configuration.preferences setValue:@YES
+                                   forKey:@"allowFileAccessFromFileURLs"];
+    } @catch (NSException *e) {
+      NSLog(@"[EXV] allowFileAccessFromFileURLs KVC failed: %@", e);
+    }
+    @try {
+      [configuration setValue:@YES
+                       forKey:@"allowUniversalAccessFromFileURLs"];
+    } @catch (NSException *e) {
+      NSLog(@"[EXV] allowUniversalAccessFromFileURLs KVC failed: %@", e);
+    }
     content_controller_ = [[WKUserContentController alloc] init];
     configuration.userContentController = content_controller_;
 
@@ -701,16 +822,39 @@ private:
     [[status_item_ button] setToolTip:@"EXV"];
 
     status_menu_ = [[NSMenu alloc] initWithTitle:@"EXV"];
-    [status_menu_ addItemWithTitle:@"显示 EXV"
-                             action:@selector(showWindow:)
-                      keyEquivalent:@""];
-    [[status_menu_ itemAtIndex:0] setTarget:status_target_];
-    [status_menu_ addItem:[NSMenuItem separatorItem]];
-    [status_menu_ addItemWithTitle:@"退出"
-                             action:@selector(quitApp:)
-                      keyEquivalent:@""];
-    [[status_menu_ itemAtIndex:2] setTarget:status_target_];
+    [status_menu_ setDelegate:status_target_];
+    rebuild_status_menu(status_menu_);
     [status_item_ setMenu:status_menu_];
+  }
+
+  void rebuild_status_menu(NSMenu *menu) {
+    if (menu == nil) {
+      return;
+    }
+    [menu removeAllItems];
+    const auto snapshot = active_config_.tray_status_snapshot_provider
+                              ? active_config_.tray_status_snapshot_provider()
+                              : exv::ui_shell::TrayStatusSnapshot{};
+    for (const auto &item : wkwebview_status_menu_model(snapshot)) {
+      if (item.separator) {
+        [menu addItem:[NSMenuItem separatorItem]];
+        continue;
+      }
+      SEL action = nil;
+      if (item.command_id == kStatusCommandShow) {
+        action = @selector(showWindow:);
+      } else if (item.command_id == kStatusCommandDisconnect) {
+        action = @selector(disconnectVpn:);
+      } else if (item.command_id == kStatusCommandQuit) {
+        action = @selector(quitApp:);
+      }
+      NSMenuItem *menu_item =
+          [menu addItemWithTitle:ns_string(item.label)
+                          action:action
+                   keyEquivalent:@""];
+      [menu_item setTarget:status_target_];
+      [menu_item setEnabled:item.enabled ? YES : NO];
+    }
   }
 
   void destroy_status_item() {
@@ -751,6 +895,11 @@ private:
     content_controller_ = nil;
     [window_delegate_ release];
     window_delegate_ = nil;
+    if (app_delegate_ != nil) {
+      [[NSApplication sharedApplication] setDelegate:nil];
+      [app_delegate_ release];
+      app_delegate_ = nil;
+    }
     [window_ release];
     window_ = nil;
     renderer_ready_ = false;
@@ -768,6 +917,7 @@ private:
   NSStatusItem *status_item_ = nil;
   NSMenu *status_menu_ = nil;
   ExvStatusItemTarget *status_target_ = nil;
+  ExvAppDelegate *app_delegate_ = nil;
   std::vector<std::string> pending_events_;
   bool running_ = false;
   bool renderer_ready_ = false;
@@ -945,9 +1095,45 @@ std::unique_ptr<exv::ui_shell::UiWindow> create_wk_webview_window() {
   (void)sender;
   if (owner_ != nullptr) owner_->show_from_status_item();
 }
+- (void)disconnectVpn:(id)sender {
+  (void)sender;
+  if (owner_ != nullptr) owner_->disconnect_from_status_item();
+}
 - (void)quitApp:(id)sender {
   (void)sender;
   if (owner_ != nullptr) owner_->quit_from_status_item();
+}
+- (void)menuNeedsUpdate:(NSMenu *)menu {
+  if (owner_ != nullptr) owner_->refresh_status_menu(menu);
+}
+@end
+
+@implementation ExvAppDelegate
+- (instancetype)initWithOwner:
+    (exv::platform::darwin::ui_shell::WkWebViewWindow *)owner {
+  self = [super init];
+  if (self != nil) {
+    owner_ = owner;
+  }
+  return self;
+}
+
+// Called by NSApplication for the Dock "Quit", Cmd-Q, logout and shutdown
+// Apple Events. Route through the same cleanup the status-item quit uses:
+// set force_quit_ so the window close prompt is bypassed, drop running_ so
+// the manual run loop exits, and close the window. Return NSTerminateCancel
+// (not NSTerminateNow) because we must NOT let AppKit call exit() here -- the
+// hand-rolled run loop in run() owns teardown. quit_from_status_item() flips
+// running_ to false, so the loop exits on its next iteration and runs
+// cleanup() (which tears down the renderer and core subprocess) before
+// returning from main. NSTerminateNow would skip cleanup() and leak the core.
+- (NSApplicationTerminateReply)applicationShouldTerminate:
+    (NSApplication *)sender {
+  (void)sender;
+  if (owner_ != nullptr) {
+    owner_->quit_from_status_item();
+  }
+  return NSTerminateCancel;
 }
 @end
 #endif

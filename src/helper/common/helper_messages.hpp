@@ -218,70 +218,6 @@ struct ManagedResource {
     std::string detail;
 };
 
-struct InstallServiceRequest {};
-
-struct InstallServiceResponse {
-    bool success = false;
-    int exit_code = 1;
-    std::string message;
-};
-
-struct UninstallServiceRequest {};
-
-struct UninstallServiceResponse {
-    bool success = false;
-    int exit_code = 1;
-    std::string message;
-};
-
-struct RepairServiceRequest {};
-
-struct RepairServiceResponse {
-    bool success = false;
-    int exit_code = 1;
-    std::string message;
-};
-
-struct CleanupLeaseSession {
-    SessionId session_id;
-    ProfileId profile_id;
-    HelperMode mode = HelperMode::Transient;
-    std::string core_phase;
-    CleanupPolicy cleanup_policy;
-    std::vector<ManagedResource> managed_resources;
-};
-
-struct CleanupLease {
-    std::string cleanup_lease_id;
-    std::vector<CleanupLeaseSession> sessions;
-};
-
-struct ExportCleanupLeaseRequest {};
-
-struct ExportCleanupLeaseResponse {
-    CleanupLease lease;
-    bool has_active_session = false;
-};
-
-struct HandoffSessionRequest {
-    CleanupLease lease;
-};
-
-struct HandoffSessionResponse {
-    bool adopted = false;
-    std::vector<SessionId> session_ids;
-    std::string message;
-};
-
-struct FinalizeHandoffRequest {
-    bool exit = true;
-};
-
-struct FinalizeHandoffResponse {
-    bool finalized = false;
-    bool exiting = false;
-};
-
 // --- Unified Request/Response ---
 
 struct HelperRequest {
@@ -404,48 +340,6 @@ ReleaseCoreLeaseResponse release_core_lease_response_from_json(const json& j);
 void to_json(json& j, const ManagedResource& resource);
 void from_json(const json& j, ManagedResource& resource);
 ManagedResource managed_resource_from_json(const json& j);
-void to_json(json& j, const InstallServiceRequest& req);
-void from_json(const json& j, InstallServiceRequest& req);
-InstallServiceRequest install_service_request_from_json(const json& j);
-void to_json(json& j, const InstallServiceResponse& resp);
-void from_json(const json& j, InstallServiceResponse& resp);
-InstallServiceResponse install_service_response_from_json(const json& j);
-void to_json(json& j, const UninstallServiceRequest& req);
-void from_json(const json& j, UninstallServiceRequest& req);
-UninstallServiceRequest uninstall_service_request_from_json(const json& j);
-void to_json(json& j, const UninstallServiceResponse& resp);
-void from_json(const json& j, UninstallServiceResponse& resp);
-UninstallServiceResponse uninstall_service_response_from_json(const json& j);
-void to_json(json& j, const RepairServiceRequest& req);
-void from_json(const json& j, RepairServiceRequest& req);
-RepairServiceRequest repair_service_request_from_json(const json& j);
-void to_json(json& j, const RepairServiceResponse& resp);
-void from_json(const json& j, RepairServiceResponse& resp);
-RepairServiceResponse repair_service_response_from_json(const json& j);
-void to_json(json& j, const CleanupLeaseSession& session);
-void from_json(const json& j, CleanupLeaseSession& session);
-CleanupLeaseSession cleanup_lease_session_from_json(const json& j);
-void to_json(json& j, const CleanupLease& lease);
-void from_json(const json& j, CleanupLease& lease);
-CleanupLease cleanup_lease_from_json(const json& j);
-void to_json(json& j, const ExportCleanupLeaseRequest& req);
-void from_json(const json& j, ExportCleanupLeaseRequest& req);
-ExportCleanupLeaseRequest export_cleanup_lease_request_from_json(const json& j);
-void to_json(json& j, const ExportCleanupLeaseResponse& resp);
-void from_json(const json& j, ExportCleanupLeaseResponse& resp);
-ExportCleanupLeaseResponse export_cleanup_lease_response_from_json(const json& j);
-void to_json(json& j, const HandoffSessionRequest& req);
-void from_json(const json& j, HandoffSessionRequest& req);
-HandoffSessionRequest handoff_session_request_from_json(const json& j);
-void to_json(json& j, const HandoffSessionResponse& resp);
-void from_json(const json& j, HandoffSessionResponse& resp);
-HandoffSessionResponse handoff_session_response_from_json(const json& j);
-void to_json(json& j, const FinalizeHandoffRequest& req);
-void from_json(const json& j, FinalizeHandoffRequest& req);
-FinalizeHandoffRequest finalize_handoff_request_from_json(const json& j);
-void to_json(json& j, const FinalizeHandoffResponse& resp);
-void from_json(const json& j, FinalizeHandoffResponse& resp);
-FinalizeHandoffResponse finalize_handoff_response_from_json(const json& j);
 
 // Unified envelope
 void to_json(json& j, const HelperRequest& req);

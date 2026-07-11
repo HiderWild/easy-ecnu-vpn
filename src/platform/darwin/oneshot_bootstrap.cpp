@@ -7,6 +7,7 @@
 
 #include "helper/common/helper_messages.hpp"
 #include "platform/common/backend_resolver.hpp"
+#include "observability/log_facade.hpp"
 
 #include <chrono>
 #include <random>
@@ -18,29 +19,32 @@ namespace exv {
 namespace platform {
 namespace {
 
-std::string random_hex(size_t bytes) {
-  std::random_device rd;
-  std::ostringstream out;
-  out << std::hex;
-  for (size_t i = 0; i < bytes; ++i) {
-    unsigned int value = rd() & 0xffU;
-    if (value < 16)
-      out << '0';
-    out << value;
-  }
-  return out.str();
-}
 
-bool wait_for_helper_hello(const HelperEndpoint &endpoint) {
-  for (int i = 0; i < 40; ++i) {
-    exv::helper::HelperRequest request;
-    request.op = exv::helper::HelperOp::Hello;
-    request.payload_json = nlohmann::json(exv::helper::HelloRequest{}).dump();
-    nlohmann::json hello = send_helper_request(endpoint, nlohmann::json(request));
-    if (hello.value("success", false))
+// Wait for the one-shot helper's endpoint socket to appear on disk.
+//
+// We deliberately do NOT open a connection to probe readiness here. The one-shot
+// helper treats each client connection as a single session: a client that
+// disconnects without acquiring a core lease triggers immediate cleanup and
+// daemon exit. Any connect-then-close probe (the previous implementation, which
+// sent Hello over a fresh short-lived connection per retry) therefore kills the
+// helper on the first close, and every subsequent retry connects to a dead
+// socket. Instead we only check that the helper has bound its listening socket
+// (the socket file appears once bind() succeeds, and start() proceeds to
+// listen() before the daemon accepts). The caller then opens the single
+// long-lived connection that will carry Hello, core-lease acquisition, and the
+// privileged operation -- no intermediate close, no exit-triggering disconnect.
+bool wait_for_helper_endpoint(const std::string &endpoint) {
+  for (int i = 0; i < 80; ++i) {
+    if (platform::file_exists(endpoint)) {
+      // Give the helper a beat to finish listen() after the file appeared, so
+      // the caller's connect() does not race a half-open socket.
+      usleep(50000);
       return true;
+    }
     usleep(100000);
   }
+  exv::observability::LogFacade::warn(
+      "One-shot helper endpoint never appeared: " + endpoint);
   return false;
 }
 
@@ -67,9 +71,10 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
     return backend;
   }
 
-  std::string session_id = random_hex(8);
-  backend.endpoint = "/tmp/exv-" + std::to_string(getuid()) + "-" +
-                     session_id + ".sock";
+  // Fixed per-user endpoint: the one-shot helper is single-instance (asserted
+  // at startup via flock), so a per-session random endpoint is unnecessary.
+  std::string session_id = "fixed";
+  backend.endpoint = "/tmp/exv-" + std::to_string(getuid()) + "-oneshot.sock";
   backend.owner = std::to_string(getuid());
   backend.parent_pid = static_cast<int>(getpid());
 
@@ -93,7 +98,7 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
     return backend;
   }
 
-  if (!wait_for_helper_hello(HelperEndpoint{backend.endpoint})) {
+  if (!wait_for_helper_endpoint(backend.endpoint)) {
     backend.code = kHelperRpcFailedCode;
     backend.message = "One-shot helper did not become ready.";
     return backend;

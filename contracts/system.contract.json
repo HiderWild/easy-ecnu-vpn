@@ -113,7 +113,12 @@
         { "key": "invalidRequest", "code": "invalid_request" },
         { "key": "logClearFailed", "code": "log_clear_failed" },
         { "key": "connectionFailed", "code": "connection_failed" },
-        { "key": "vpnStartFailed", "code": "vpn_start_failed" }
+        { "key": "vpnStartFailed", "code": "vpn_start_failed" },
+        { "key": "elevationDenied", "code": "elevation_denied" },
+        { "key": "launchFailed", "code": "launch_failed" },
+        { "key": "helperNotFound", "code": "helper_not_found" },
+        { "key": "needsElevation", "code": "needs_elevation" },
+        { "key": "vpnDisconnectTimeout", "code": "vpn_disconnect_timeout" }
       ]
     },
     "core_rpc": {
@@ -307,13 +312,7 @@
         { "name": "Inspect", "code": 9, "request": "InspectRequest", "response": "InspectResponse", "requires_session": false },
         { "name": "AcquireCoreLease", "code": 10, "request": "AcquireCoreLeaseRequest", "response": "AcquireCoreLeaseResponse", "requires_session": false },
         { "name": "KeepAlive", "code": 11, "request": "KeepAliveRequest", "response": "KeepAliveResponse", "requires_session": false },
-        { "name": "ReleaseCoreLease", "code": 12, "request": "ReleaseCoreLeaseRequest", "response": "ReleaseCoreLeaseResponse", "requires_session": false },
-        { "name": "InstallService", "code": 13, "request": "InstallServiceRequest", "response": "InstallServiceResponse", "requires_session": false },
-        { "name": "UninstallService", "code": 14, "request": "UninstallServiceRequest", "response": "UninstallServiceResponse", "requires_session": false },
-        { "name": "ExportCleanupLease", "code": 15, "request": "ExportCleanupLeaseRequest", "response": "ExportCleanupLeaseResponse", "requires_session": false },
-        { "name": "HandoffSession", "code": 16, "request": "HandoffSessionRequest", "response": "HandoffSessionResponse", "requires_session": false },
-        { "name": "FinalizeHandoff", "code": 17, "request": "FinalizeHandoffRequest", "response": "FinalizeHandoffResponse", "requires_session": false },
-        { "name": "RepairService", "code": 18, "request": "RepairServiceRequest", "response": "RepairServiceResponse", "requires_session": false }
+        { "name": "ReleaseCoreLease", "code": 12, "request": "ReleaseCoreLeaseRequest", "response": "ReleaseCoreLeaseResponse", "requires_session": false }
       ],
       "messages": [
         "HelloRequest",
@@ -340,21 +339,7 @@
         "KeepAliveResponse",
         "ReleaseCoreLeaseRequest",
         "ReleaseCoreLeaseResponse",
-        "InstallServiceRequest",
-        "InstallServiceResponse",
-        "UninstallServiceRequest",
-        "UninstallServiceResponse",
-        "RepairServiceRequest",
-        "RepairServiceResponse",
-        "ManagedResource",
-        "CleanupLeaseSession",
-        "CleanupLease",
-        "ExportCleanupLeaseRequest",
-        "ExportCleanupLeaseResponse",
-        "HandoffSessionRequest",
-        "HandoffSessionResponse",
-        "FinalizeHandoffRequest",
-        "FinalizeHandoffResponse"
+        "ManagedResource"
       ],
       "capabilities": [
         "tunnel_device_create",

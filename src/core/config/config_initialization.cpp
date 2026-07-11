@@ -74,17 +74,20 @@ constexpr std::string_view kRequiredFields[] = {
     "auto_connect_on_launch",
 };
 
-bool write_default_config(const std::string &config_dir, Config &out) {
+Config default_config() {
+  Config cfg;
+  normalize_native_only(cfg);
+  return cfg;
+}
+
+bool write_config(const std::string &config_dir, const Config &cfg) {
   namespace fs = std::filesystem;
   std::error_code ec;
   fs::create_directories(fs::u8path(config_dir), ec);
 
-  out = Config{};
-  normalize_native_only(out);
-
   const std::string final_path = platform::config_path(config_dir);
   const std::string tmp_path = final_path + ".tmp";
-  const json serialized = out;
+  const json serialized = cfg;
 
   if (!platform::write_file(tmp_path, serialized.dump(4))) {
     exv::observability::LogFacade::error(
@@ -114,9 +117,29 @@ bool write_default_config(const std::string &config_dir, Config &out) {
 ConfigInitializationResult repaired_result(ConfigInitializationStatus status,
                                            const std::string &reason,
                                            const std::string &config_dir) {
-  Config cfg;
-  (void)write_default_config(config_dir, cfg);
+  Config cfg = default_config();
+  (void)write_config(config_dir, cfg);
   return ConfigInitializationResult{status, cfg, reason};
+}
+
+ConfigInitializationResult repaired_object_result(const json &value,
+                                                  const std::string &reason,
+                                                  const std::string &config_dir) {
+  json repaired = value;
+  const json defaults = default_config();
+  for (const auto field : kRequiredFields) {
+    const std::string field_name(field);
+    if (!repaired.contains(field_name) ||
+        !field_type_matches(field, repaired.at(field_name))) {
+      repaired[field_name] = defaults.at(field_name);
+    }
+  }
+
+  Config cfg = repaired.get<Config>();
+  normalize_native_only(cfg);
+  (void)write_config(config_dir, cfg);
+  return ConfigInitializationResult{ConfigInitializationStatus::Invalid, cfg,
+                                    reason};
 }
 
 const char *status_reason(ConfigInitializationStatus status) {
@@ -174,13 +197,16 @@ ConfigInitializationResult ensure_initialized_config(
   try {
     const auto parsed = json::parse(platform::read_file(path));
     std::string completeness_reason;
-    if (!is_complete_initialized_config_json(parsed, &completeness_reason)) {
-      exv::observability::LogFacade::warn(
-          "ensure_initialized_config: invalid config completeness: " +
-          completeness_reason);
-      return repaired_result(ConfigInitializationStatus::Invalid,
-                             completeness_reason, config_dir);
-    }
+	    if (!is_complete_initialized_config_json(parsed, &completeness_reason)) {
+	      exv::observability::LogFacade::warn(
+	          "ensure_initialized_config: invalid config completeness: " +
+	          completeness_reason);
+	      if (parsed.is_object()) {
+	        return repaired_object_result(parsed, completeness_reason, config_dir);
+	      }
+	      return repaired_result(ConfigInitializationStatus::Invalid,
+	                             completeness_reason, config_dir);
+	    }
 
     Config cfg = parsed.get<Config>();
     normalize_native_only(cfg);

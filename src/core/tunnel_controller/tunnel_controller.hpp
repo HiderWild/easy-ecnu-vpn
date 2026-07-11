@@ -51,12 +51,6 @@ public:
     void connect(UserIntent intent);
     void disconnect(DisconnectReason reason = DisconnectReason::UserRequested);
     void set_auto_reconnect(bool enabled);
-    bool replace_helper_for_handoff(
-        std::shared_ptr<exv::helper::HelperClient> helper,
-        std::shared_ptr<exv::platform::PlatformNetworkOps> net_ops,
-        std::string core_lease_id,
-        std::string helper_mode,
-        std::string helper_endpoint);
     std::shared_ptr<exv::helper::HelperClient> helper_client_for_maintenance() const;
 
     // Status

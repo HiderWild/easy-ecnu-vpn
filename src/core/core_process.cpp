@@ -16,6 +16,7 @@
 #include "core/rpc/core_api_setup.hpp"
 #include "core/tunnel_controller/reconnect_policy.hpp"
 #include "core/tunnel_controller/tunnel_controller.hpp"
+#include "core/use_cases/tunnel_use_cases.hpp"
 
 #include <nlohmann/json.hpp>
 
@@ -69,6 +70,12 @@ static std::atomic<bool> g_stop_requested{false};
 
 static void core_signal_handler(int) {
     g_stop_requested.store(true);
+}
+
+static void log_startup_fatal(const std::string& code,
+                              const std::string& message) {
+    exv::observability::LogFacade::error(
+        "Core process startup failed [" + code + "]: " + message);
 }
 
 // ------------------------------------------------------------------
@@ -546,16 +553,26 @@ int core_process_main(const std::string& config_dir,
 
     auto core_lock = exv::core::lifecycle::CoreInstanceLock::try_acquire();
     if (!core_lock.has_value()) {
+        log_startup_fatal(
+            "core_lock_busy",
+            "another core process already owns the versioned core lock at " +
+                exv::core::lifecycle::core_lock_path());
         std::cerr << "fatal: another core process already owns the versioned core lock"
                   << std::endl;
         return 1;
     }
 
-    auto controller = std::make_shared<TunnelController>(
+    // The native dispatcher receives a shell controller for non-desktop-backed
+    // actions (e.g. vpn.set_auto_reconnect).  Desktop-backed VPN actions are
+    // intercepted and routed to app_api, which resolves the live controller via
+    // tunnel_use_cases().  The registry worker also observes the live controller
+    // through tunnel_use_cases() so it sees real tunnel state instead of the
+    // idle shell.
+    auto shell_controller = std::make_shared<TunnelController>(
         std::shared_ptr<exv::helper::HelperClient>{},
         std::shared_ptr<exv::platform::PlatformNetworkOps>{},
         ReconnectConfig{});
-    auto native_dispatcher = exv::core_api::create_dispatcher(controller);
+    auto native_dispatcher = exv::core_api::create_dispatcher(shell_controller);
     native_dispatcher->register_handler(
         "core.shutdown",
         [](const exv::core_api::RpcRequest& req) {
@@ -578,6 +595,9 @@ int core_process_main(const std::string& config_dir,
     // 5. Create pipe listener for CLI connections after owning the versioned lock.
     auto pipe_listener = std::make_unique<PipeIpcListener>(pipe_path);
     if (!pipe_listener->start()) {
+        log_startup_fatal(
+            "pipe_bind_failed",
+            "could not bind versioned core IPC endpoint '" + pipe_path + "'");
         std::cerr << "fatal: another core process is already running (pipe '"
                   << pipe_path << "' is in use)" << std::endl;
         return 1;
@@ -586,6 +606,8 @@ int core_process_main(const std::string& config_dir,
     auto registry_snapshot =
         bootstrap_registry_snapshot(*native_dispatcher, pipe_path);
     if (!registry_snapshot.has_value()) {
+        log_startup_fatal("registry_bootstrap_failed",
+                          "could not initialize versioned core registry");
         std::cerr << "fatal: could not initialize versioned core registry"
                   << std::endl;
         pipe_listener->stop();
@@ -605,8 +627,12 @@ int core_process_main(const std::string& config_dir,
                                                       *status);
         }
 
+        // Observe the live controller (if one exists) for helper lease state.
+        auto live_controller = exv::core::tunnel_use_cases().controller_if_exists();
         candidate.helper_core_lease_id.clear();
-        if (auto helper = controller->helper_client_for_maintenance();
+        if (auto helper = live_controller
+                ? live_controller->helper_client_for_maintenance()
+                : nullptr;
             helper && helper->is_connected()) {
             try {
                 const auto inspect = helper->inspect(exv::helper::InspectRequest{});
@@ -633,15 +659,22 @@ int core_process_main(const std::string& config_dir,
         return true;
     };
 
-    controller->set_status_callback([&](const TunnelStatusSnapshot& status) {
+    // The shell controller has no helper and never produces meaningful status
+    // callbacks.  The live controller (owned by tunnel_use_cases) is created
+    // lazily when the desktop API brings up a VPN session.  We install a status
+    // callback on the shell so that registry heartbeat persists at startup; once
+    // the live controller exists, its callbacks flow through the desktop VPN
+    // action handlers which also call into the registry path.
+    shell_controller->set_status_callback([&](const TunnelStatusSnapshot& status) {
         if (!persist_registry(status)) {
             exv::observability::LogFacade::warn(
                 "Core process could not refresh the versioned core registry after status update");
         }
     });
 
-    if (!persist_registry(controller->status())) {
-        exv::observability::LogFacade::warn(
+    if (!persist_registry(shell_controller->status())) {
+        log_startup_fatal(
+            "registry_persist_failed",
             "Core process could not persist the versioned core registry; aborting startup");
         pipe_listener->stop();
         return 1;
@@ -770,7 +803,7 @@ int core_process_main(const std::string& config_dir,
     }
 
     registry_worker_stop.store(true);
-    controller->set_status_callback({});
+    shell_controller->set_status_callback({});
     if (registry_worker.joinable()) {
         registry_worker.join();
     }

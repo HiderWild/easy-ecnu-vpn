@@ -107,8 +107,30 @@ describe('native WebView package policy', () => {
     assert.doesNotMatch(windows, /desktop:compile|desktop:package|build:electron|electron\\release|electron-builder/i)
 
     assertUnixDesktopScriptPackagesWebView(macos, 'macos')
+    assert.match(macos, /package_ui_shell\.py --platform macos/)
+    assert.match(macos, /EXV\.app/)
+    assert.match(macos, /webview\/dist/)
     assertUnixDesktopScriptPackagesWebView(linux, 'linux')
     assert.doesNotMatch(macos, /desktop:compile|desktop:package|build:electron|electron\/release|electron-builder/i)
+    assert.doesNotMatch(macos, /ECNUVPN_|ECNU VPN\.app/)
+  })
+
+  it('creates a macOS EXV.app bundle beside the flat WebView package without changing Windows layout', () => {
+    const packageScript = readFileSync(join(repoRoot, 'scripts', 'package_ui_shell.py'), 'utf8')
+
+    assert.match(packageScript, /platform == "macos"/)
+    assert.match(packageScript, /EXV\.app/)
+    assert.match(packageScript, /Contents\/MacOS/)
+    assert.match(packageScript, /Contents\/Resources/)
+    assert.match(packageScript, /Info\.plist/)
+    assert.match(packageScript, /CFBundleIdentifier/)
+    assert.match(packageScript, /CFBundleExecutable/)
+    assert.match(packageScript, /icon\.icns/)
+    assert.match(packageScript, /com\.exv\.app/)
+    assert.match(packageScript, /bin\/exv/)
+    assert.match(packageScript, /webui\/index\.html/)
+    assert.match(packageScript, /if platform == "windows"/)
+    assert.match(packageScript, /copy_windows_runtime_assets\(package_dir\)/)
   })
 
   it('removes Electron adapter source and config from production webui paths', () => {
@@ -180,6 +202,9 @@ describe('native WebView package policy', () => {
     assert.doesNotMatch(windowsSmoke, /windows\\electron|dist-electron/i)
 
     assert.match(macosSmoke, /build\/macos\/webview\/package\/EXV/)
+    assert.match(macosSmoke, /PACKAGE_ROOT\/EXV\.app/)
+    assert.match(macosSmoke, /Contents\/Info\.plist/)
+    assert.match(macosSmoke, /Contents\/Resources\/bin/)
     assert.match(macosSmoke, /package_ui_shell\.py --verify-launch-targets-only --package-dir "\$PACKAGE_ROOT"/)
     assert.doesNotMatch(macosSmoke, /build\/macos\/electron|Electron \.app|ELECTRON_RELEASE/)
 
@@ -250,9 +275,13 @@ describe('native WebView package policy', () => {
     assert.match(releaseScript, /makensis\.exe/)
     assert.match(releaseScript, /distribution\\windows\\exv\.nsi/)
     assert.match(releaseScript, /function New-NsisUninstallManifest/)
+    assert.match(releaseScript, /function New-ReleasePackageRoot/)
     assert.match(releaseScript, /UNINSTALL_MANIFEST/)
     assert.match(releaseScript, /Get-ChildItem/)
     assert.match(releaseScript, /Get-RelativePathFromRoot/)
+    assert.match(releaseScript, /\$supportDir = Join-Path \$stageRoot 'support'/)
+    assert.match(releaseScript, /clear-local-user-config\.ps1/)
+    assert.match(releaseScript, /clear-windows-legacy-state\.ps1/)
     assert.doesNotMatch(releaseScript, /GetRelativePath/)
     assert.match(releaseScript, /RMDir "\$INSTDIR"/)
     assert.doesNotMatch(releaseScript, /-RuntimeDir \$resolvedPackageRoot/)
@@ -267,6 +296,7 @@ describe('native WebView package policy', () => {
     assert.match(nsis, /!insertmacro MUI_PAGE_WELCOME/)
     assert.match(nsis, /!insertmacro MUI_PAGE_DIRECTORY/)
     assert.match(nsis, /Page custom FinishOptionsPage FinishOptionsLeave/)
+    assert.match(nsis, /UninstPage custom un\.UninstallOptionsPage un\.UninstallOptionsLeave/)
     assert.match(nsis, /!insertmacro MUI_LANGUAGE "SimpChinese"/)
     assert.doesNotMatch(nsis, /Page directory/)
     assert.match(nsis, /Var HadHelperService/)
@@ -279,6 +309,18 @@ describe('native WebView package policy', () => {
     assert.match(nsis, /Stop-Process -Name exv-helper/)
     assert.match(nsis, /sc\.exe delete \$\{SERVICE_NAME\}/)
     assert.match(nsis, /StrCmp \$HadHelperService 1/)
+    assert.match(nsis, /Function WriteHelperProcessCleanupScript/)
+    assert.match(nsis, /Function RunHelperProcessCleanup/)
+    assert.match(nsis, /Call RunHelperProcessCleanup/)
+    assert.match(nsis, /Function RunLegacyCompatibilityCleanup/)
+    assert.match(nsis, /Call RunLegacyCompatibilityCleanup/)
+    assert.match(nsis, /Function un\.WriteHelperProcessCleanupScript/)
+    assert.match(nsis, /Function un\.RunHelperProcessCleanup/)
+    assert.match(nsis, /Call un\.RunHelperProcessCleanup/)
+    assert.match(nsis, /Function un\.RunLegacyCompatibilityCleanup/)
+    assert.match(nsis, /Call un\.RunLegacyCompatibilityCleanup/)
+    assert.match(nsis, /clear-windows-legacy-state\.ps1/)
+    assert.match(nsis, /taskkill\.exe \/IM exv-helper\.exe \/T \/F/)
     assert.match(nsis, /Function StopRunningAppProcesses/)
     assert.match(nsis, /Function WriteAppProcessCleanupScript/)
     assert.match(nsis, /NamedPipeClientStream/)
@@ -302,11 +344,24 @@ describe('native WebView package policy', () => {
     assert.match(nsis, /Var FinishLaunchApp/)
     assert.match(nsis, /Var FinishCreateDesktopShortcutCheckbox/)
     assert.match(nsis, /Var FinishLaunchAppCheckbox/)
+    assert.match(nsis, /Var UninstallClearUserData/)
+    assert.match(nsis, /Var UninstallClearUserDataCheckbox/)
     assert.match(nsis, /\$\{NSD_SetState\} \$FinishCreateDesktopShortcutCheckbox \$\{BST_CHECKED\}/)
     assert.match(nsis, /\$\{NSD_SetState\} \$FinishLaunchAppCheckbox \$\{BST_CHECKED\}/)
+    assert.match(nsis, /\$\{NSD_SetState\} \$UninstallClearUserDataCheckbox \$\{BST_UNCHECKED\}/)
     assert.match(nsis, /CreateShortCut "\$DESKTOP\\EXV\.lnk"/)
     assert.match(nsis, /Delete "\$DESKTOP\\EXV\.lnk"/)
     assert.match(nsis, /SetOutPath "\$INSTDIR"[\s\S]*ExecShell "open" "\$INSTDIR\\exv-ui\.exe" "" SW_SHOWNORMAL/)
+    assert.match(nsis, /Function un\.RunUserDataCleanup/)
+    assert.match(nsis, /\$INSTDIR\\support\\clear-windows-legacy-state\.ps1/)
+    assert.match(nsis, /\$INSTDIR\\support\\clear-local-user-config\.ps1/)
+    assert.match(nsis, /SetOutPath "\$INSTDIR\\support"/)
+    assert.match(nsis, /File "\$\{SOURCE_DIR\}\\support\\clear-local-user-config\.ps1"/)
+    assert.match(nsis, /File "\$\{SOURCE_DIR\}\\support\\clear-windows-legacy-state\.ps1"/)
+    assert.match(nsis, /-IncludeCredentialManager/)
+    assert.match(nsis, /Delete "\$LOCALAPPDATA\\EXV\\Helper\\exv-helper\.exe"/)
+    assert.match(nsis, /RMDir "\$LOCALAPPDATA\\EXV\\Helper"/)
+    assert.match(nsis, /RMDir "\$LOCALAPPDATA\\EXV"/)
     assert.match(nsis, /SetShellVarContext current/)
     assert.match(nsis, /File \/r "\$\{SOURCE_DIR\}\\\*\.\*"/)
     assert.match(nsis, /CreateShortCut/)
@@ -329,13 +384,33 @@ describe('native WebView package policy', () => {
 
     const installStopProcesses = nsis.indexOf('Call StopRunningAppProcesses')
     const installDetectService = nsis.indexOf('Call DetectHelperServiceBeforeInstall')
+    const installHelperCleanup = nsis.indexOf('Call RunHelperProcessCleanup')
+    const installLegacyCleanup = nsis.indexOf('Call RunLegacyCompatibilityCleanup')
+    const installSupportOutPath = nsis.indexOf('SetOutPath "$INSTDIR\\support"')
+    const installSupportLocalCleanup = nsis.indexOf('File "${SOURCE_DIR}\\support\\clear-local-user-config.ps1"')
+    const installSupportLegacyCleanup = nsis.indexOf('File "${SOURCE_DIR}\\support\\clear-windows-legacy-state.ps1"')
+    const installWriteUninstaller = nsis.indexOf('WriteUninstaller "$INSTDIR\\Uninstall.exe"')
     const installCopyFiles = nsis.indexOf('File /r "${SOURCE_DIR}\\*.*"')
     assert.notEqual(installStopProcesses, -1, 'installer should close running app processes')
     assert.notEqual(installDetectService, -1, 'installer should detect existing helper service')
+    assert.notEqual(installHelperCleanup, -1, 'installer should kill lingering helper processes')
+    assert.notEqual(installLegacyCleanup, -1, 'installer should clear legacy compatibility residue')
+    assert.notEqual(installSupportOutPath, -1, 'installer should stage support files before bulk copy')
+    assert.notEqual(installSupportLocalCleanup, -1, 'installer should pre-stage the local config cleanup script')
+    assert.notEqual(installSupportLegacyCleanup, -1, 'installer should pre-stage the legacy cleanup script')
+    assert.notEqual(installWriteUninstaller, -1, 'installer should write the uninstaller before risky payload copy')
     assert.notEqual(installCopyFiles, -1, 'installer should copy packaged files')
     assert.ok(
-      installStopProcesses < installDetectService && installDetectService < installCopyFiles,
-      'installer should close app processes including stale daemon cores before service maintenance and file copy',
+      installStopProcesses < installDetectService &&
+        installDetectService < installHelperCleanup &&
+        installHelperCleanup < installLegacyCleanup &&
+        installLegacyCleanup < installSupportOutPath &&
+        installSupportOutPath < installSupportLocalCleanup &&
+        installSupportLocalCleanup < installSupportLegacyCleanup &&
+        installSupportLegacyCleanup < installWriteUninstaller &&
+        installWriteUninstaller < installCopyFiles &&
+        installLegacyCleanup < installCopyFiles,
+      'installer should close app processes, retire stale service state, kill lingering helper processes, pre-stage cleanup support plus the new uninstaller, and then copy the rest of the payload',
     )
 
     assert.match(readme, /EXV-<version>\[-<build-label>\]-windows-x64-portable\.zip/)
@@ -365,6 +440,26 @@ describe('native WebView package policy', () => {
     assert.doesNotMatch(startFlow, /\$alwaysMatchNames = @\('exv\.exe', 'exv-helper\.exe', 'exv-ui\.exe'\)/)
     assert.doesNotMatch(startFlow, /build\\windows\\electron|dist-electron|desktop:package|desktop:package:dir|build:electron/i)
     assert.doesNotMatch(startFlow, /Find-ElectronProcess|Electron process/i)
+  })
+
+  it('ships a dedicated Windows legacy cleanup script for compatibility residue', () => {
+    const cleanupScript = readFileSync(join(repoRoot, 'scripts', 'clear-windows-legacy-state.ps1'), 'utf8')
+
+    assert.match(cleanupScript, /\[CmdletBinding\(\)\]/)
+    assert.match(cleanupScript, /\[string\]\$CurrentInstallDir/)
+    assert.match(cleanupScript, /\$ErrorActionPreference = 'Stop'/)
+    assert.match(cleanupScript, /Programs\\ECNU VPN/)
+    assert.match(cleanupScript, /Programs\\ECNU-VPN/)
+    assert.match(cleanupScript, /\$env:ProgramFiles/)
+    assert.match(cleanupScript, /\$\{env:ProgramFiles\(x86\)\}/)
+    assert.match(cleanupScript, /exv-ui\.exe\.WebView2/)
+    assert.match(cleanupScript, /EXV\\Helper/)
+    assert.match(cleanupScript, /exv-helper-session\.json/)
+    assert.match(cleanupScript, /Remove-DirectoryTreeIfExists/)
+    assert.match(cleanupScript, /Remove-FileIfExists/)
+    assert.match(cleanupScript, /Assert-PathWithinAnyRoot/)
+    assert.match(cleanupScript, /Test-SamePath/)
+    assert.match(cleanupScript, /Skip removing current install root/)
   })
 
   it('keeps first-run service install prompts out of the App bootstrap', () => {
@@ -676,9 +771,11 @@ describe('native WebView package policy', () => {
     assert.doesNotMatch(onMessage, /handler_\s*\?\s*handler_\(request_json\)/)
     assert.match(win32Host, /kHostBridgeResponseMessage/)
     assert.match(win32Host, /std::thread/)
+    assert.match(runtime, /struct RuntimeCoreAccess/)
     assert.match(runtime, /std::thread event_pump_thread/)
-    assert.match(runtime, /client\.pump_events\(\)/)
-    assert.match(runtime, /runtime_config\.pump_core_events = \[&client\]\(\) \{ client\.pump_events\(\); \};/)
+    assert.match(runtime, /core\.pump_events\(\)/)
+    assert.match(runtime, /runtime_config\.pump_core_events = \[&core\]\(\) \{ core\.pump_events\(\); \};/)
+    assert.match(runtime, /AsyncHostBridge bridge\([\s\S]*core\.invoke_async[\s\S]*core\.restart/)
     assert.match(rpcClient, /std::try_to_lock/)
     assert.match(rpcClient, /if \(!read_lock\.owns_lock\(\)\) \{[\s\S]*return;/)
     assert.match(runtime, /event_pump_thread\.join\(\)/)

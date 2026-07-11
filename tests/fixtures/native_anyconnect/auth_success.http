@@ -1,6 +1,0 @@
-HTTP/1.1 200 OK
-Content-Type: text/html; charset=utf-8
-Set-Cookie: webvpn=REDACTED_COOKIE; Path=/; Secure; HttpOnly
-Cache-Control: no-store
-
-<html><body>Login OK for student@example.invalid</body></html>

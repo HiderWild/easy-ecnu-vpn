@@ -16,13 +16,7 @@ enum class HelperOp : uint32_t {
     Inspect = 9,
     AcquireCoreLease = 10,
     KeepAlive = 11,
-    ReleaseCoreLease = 12,
-    InstallService = 13,
-    UninstallService = 14,
-    ExportCleanupLease = 15,
-    HandoffSession = 16,
-    FinalizeHandoff = 17,
-    RepairService = 18
+    ReleaseCoreLease = 12
 };
 
 enum class HelperMode : uint32_t {

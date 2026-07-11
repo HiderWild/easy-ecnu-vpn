@@ -15,18 +15,6 @@ namespace exv {
 namespace platform {
 namespace {
 
-std::string random_hex(size_t bytes) {
-  std::random_device rd;
-  std::ostringstream out;
-  out << std::hex;
-  for (size_t i = 0; i < bytes; ++i) {
-    unsigned int value = rd() & 0xffU;
-    if (value < 16)
-      out << '0';
-    out << value;
-  }
-  return out.str();
-}
 
 bool wait_for_helper_hello(const HelperEndpoint &endpoint) {
   for (int i = 0; i < 40; ++i) {
@@ -72,9 +60,10 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
     return backend;
   }
 
-  const std::string session_id = random_hex(8);
-  backend.endpoint = "/tmp/exv-" + std::to_string(getuid()) + "-" +
-                     session_id + ".sock";
+  // Fixed per-user endpoint: the one-shot helper is single-instance (asserted
+  // at startup via flock), so a per-session random endpoint is unnecessary.
+  const std::string session_id = "fixed";
+  backend.endpoint = "/tmp/exv-" + std::to_string(getuid()) + "-oneshot.sock";
   backend.owner = std::to_string(getuid());
   backend.parent_pid = static_cast<int>(getpid());
 

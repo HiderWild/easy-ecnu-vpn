@@ -8,6 +8,9 @@
 #include "helper/helper.hpp"
 #include "platform/common/helper_platform.hpp"
 
+#include <cstdlib>
+#include <string>
+
 namespace exv {
 namespace platform {
 
@@ -27,6 +30,16 @@ ServiceStatusSnapshot current_service_status() {
                                        {"direct_fallback", false},
                                        {"helper_binary", true}};
   return status;
+}
+
+bool try_start_helper_service() {
+  const auto &config = helper_platform_config();
+  std::string unit = config.service_label;
+  if (unit.empty()) {
+    return false;
+  }
+  std::string cmd = "systemctl start " + unit + " >/dev/null 2>&1";
+  return std::system(cmd.c_str()) == 0;
 }
 
 } // namespace platform

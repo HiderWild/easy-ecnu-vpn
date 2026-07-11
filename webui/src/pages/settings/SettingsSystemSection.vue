@@ -12,6 +12,7 @@ import {
   Upload,
 } from 'lucide-vue-next'
 import ModalShell from '../../components/ModalShell.vue'
+import PasswordField from '../../components/PasswordField.vue'
 import ToggleSwitch from '../../components/ToggleSwitch.vue'
 import { useConfigStore, type SettingsConfig } from '../../stores/config'
 import { useUiStore } from '../../stores/ui'
@@ -879,12 +880,11 @@ onMounted(() => {
 
           <div>
             <label class="mb-1.5 block text-xs font-medium text-muted">导出口令</label>
-            <input
+            <PasswordField
               v-model="exportPassword"
-              type="password"
               :disabled="!exportIncludePassword"
               placeholder="选择导出密码时必填"
-              class="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-foreground placeholder:text-muted transition-colors focus:border-accent/50 focus:outline-none disabled:opacity-50"
+              input-class="w-full rounded-lg border border-border bg-bg px-3 py-2 pr-11 text-sm text-foreground placeholder:text-muted transition-colors focus:border-accent/50 focus:outline-none disabled:opacity-50"
               @blur="exportPasswordTouched = true"
             />
             <p

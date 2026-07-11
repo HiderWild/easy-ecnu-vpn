@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { Power } from 'lucide-vue-next'
+import PasswordField from './PasswordField.vue'
 import ToggleSwitch from './ToggleSwitch.vue'
 import { useConfigStore } from '../stores/config'
 import { useUiStore } from '../stores/ui'
@@ -217,13 +218,15 @@ async function handlePowerClick() {
           </label>
         </div>
         <div class="flex items-center gap-1.5">
-          <input
+          <PasswordField
             v-model="password"
-            type="password"
             autocomplete="current-password"
             placeholder="密码"
-            class="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-xs text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
-            @keyup.enter="handlePowerClick"
+            wrapper-class="min-w-0 flex-1"
+            input-class="h-8 w-full rounded-md border border-border bg-surface px-2 pr-9 text-xs text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
+            reveal-button-class="right-1 h-6 w-6"
+            :show-saved-password-overwrite-hint="hasStoredPassword && rememberPassword"
+            @keyup-enter="handlePowerClick"
           />
           <label class="flex h-8 shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-1.5 text-[11px] text-muted">
             <input

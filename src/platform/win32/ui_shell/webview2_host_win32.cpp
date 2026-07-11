@@ -43,6 +43,7 @@ constexpr DWORD kFixedWindowStyle =
     WS_OVERLAPPED | WS_SYSMENU | WS_MINIMIZEBOX;
 constexpr int kTrayCommandShow = 1001;
 constexpr int kTrayCommandQuit = 1002;
+constexpr int kTrayCommandDisconnect = 1003;
 constexpr UINT kTrayCallbackMessage = WM_APP + 0x42;
 constexpr UINT kApplyWindowModeMessage = WM_APP + 0x43;
 constexpr UINT kHostBridgeResponseMessage = WM_APP + 0x44;
@@ -477,8 +478,10 @@ public:
     start_host_bridge_worker();
 
     running_ = true;
-    ShowWindow(hwnd_, SW_SHOW);
-    UpdateWindow(hwnd_);
+    ShowWindow(hwnd_, active_config_.start_hidden ? SW_HIDE : SW_SHOW);
+    if (!active_config_.start_hidden) {
+      UpdateWindow(hwnd_);
+    }
 
     auto *handler = new EnvironmentCompletedHandler(this);
     const HRESULT created = CreateCoreWebView2EnvironmentWithOptions(
@@ -502,6 +505,10 @@ public:
       }
       if (active_config_.pump_core_events) {
         active_config_.pump_core_events();
+      }
+      if (active_config_.poll_wake_requests) {
+        active_config_.poll_wake_requests(
+            [this]() { restore_or_focus_window(); });
       }
       Sleep(15);
     }
@@ -1514,11 +1521,15 @@ public:
     if (!menu) {
       return;
     }
-    for (const auto &item : webview2_tray_menu_model()) {
+    const auto snapshot = active_config_.tray_status_snapshot_provider
+                              ? active_config_.tray_status_snapshot_provider()
+                              : exv::ui_shell::TrayStatusSnapshot{};
+    for (const auto &item : webview2_tray_menu_model(snapshot)) {
       if (item.separator) {
         AppendMenuW(menu, MF_SEPARATOR, 0, nullptr);
       } else if (!item.label.empty()) {
-        AppendMenuW(menu, MF_STRING, static_cast<UINT_PTR>(item.command_id),
+        AppendMenuW(menu, MF_STRING | (item.enabled ? 0 : MF_GRAYED),
+                    static_cast<UINT_PTR>(item.command_id),
                     item.label.c_str());
       }
     }
@@ -1531,6 +1542,10 @@ public:
     DestroyMenu(menu);
     if (command == kTrayCommandShow) {
       show_from_tray();
+    } else if (command == kTrayCommandDisconnect) {
+      if (active_config_.disconnect_vpn_in_background) {
+        active_config_.disconnect_vpn_in_background();
+      }
     } else if (command == kTrayCommandQuit) {
       quit_from_tray();
     }
@@ -1746,8 +1761,8 @@ private:
     vpn: {
       connect: (password) => rpc('vpn.connect', { password }),
       disconnect: () => rpc('vpn.disconnect'),
-      connectElevated: (password) => rpc('vpn.connect', { password, allow_direct_fallback: true }),
-      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend, allow_direct_fallback: true }),
+      connectElevated: (password) => rpc('vpn.connect', { password }),
+      disconnectElevated: (backend) => rpc('vpn.disconnect', { backend }),
       authInteraction: () => rpc('vpn.authInteraction.get'),
       respondAuthInteraction: (id, value) => rpc('vpn.authInteraction.respond', { id, value }),
     },
@@ -1820,7 +1835,7 @@ private:
       },
     },
     core: {
-      restart: () => unsupported('core.restart'),
+      restart: () => rpc('core.restart'),
       quit: () => { window.close(); return Promise.resolve(); },
     },
   };
@@ -2172,12 +2187,20 @@ std::wstring webview2_taskbar_created_message_name() {
   return L"TaskbarCreated";
 }
 
-std::vector<WebView2TrayMenuItem> webview2_tray_menu_model() {
-  return {
-      {L"显示 EXV", kTrayCommandShow, false},
-      {L"", 0, true},
-      {L"退出", kTrayCommandQuit, false},
-  };
+std::vector<WebView2TrayMenuItem>
+webview2_tray_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
+  std::vector<WebView2TrayMenuItem> items;
+  for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
+           snapshot)) {
+    items.push_back({wide_from_utf8(label), 0, false, false});
+  }
+  items.push_back({L"", 0, true, false});
+  items.push_back({L"断开连接", kTrayCommandDisconnect, false,
+                   snapshot.connected});
+  items.push_back({L"显示 EXV", kTrayCommandShow, false, true});
+  items.push_back({L"", 0, true, false});
+  items.push_back({L"退出", kTrayCommandQuit, false, true});
+  return items;
 }
 
 std::wstring webview2_renderer_uri(

@@ -32,6 +32,19 @@ public:
     addr.sun_family = AF_UNIX;
     std::snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", path.c_str());
 
+    // Remove any stale socket left by a previous daemon that exited without
+    // cleaning up (SIGKILL, crash, or a prior bind() failure). On macOS an
+    // AF_UNIX name can remain "in use" even after the file is gone, so bind()
+    // would fail with EADDRINUSE and the daemon would never come up — leaving
+    // the service stuck in installed-but-unavailable and crashing in a tight
+    // launchd KeepAlive loop. unlink() clears both the file and the lingering
+    // name binding; ignore ENOENT (nothing to remove).
+    if (::unlink(path.c_str()) != 0 && errno != ENOENT) {
+      ::close(server_fd_);
+      server_fd_ = -1;
+      return false;
+    }
+
     if (bind(server_fd_, reinterpret_cast<sockaddr *>(&addr), sizeof(addr)) != 0) {
       ::close(server_fd_);
       server_fd_ = -1;
@@ -103,10 +116,29 @@ public:
   bool send_response(const std::string &response) override {
     std::string payload = response;
     payload.push_back('\n');
-    ssize_t written = write(client_fd_, payload.data(), payload.size());
+    // Loop on short writes: a single write() can return fewer bytes than
+    // requested (kernel send-buffer pressure), which would truncate the
+    // response frame on the wire. The client frames on '\n', so a truncated
+    // frame yields a valid-looking envelope with missing fields (e.g. an empty
+    // payload_json) that the client then fails to parse. Write until the whole
+    // payload is flushed or the connection errors out.
+    const char *data = payload.data();
+    size_t remaining = payload.size();
+    while (remaining > 0) {
+      ssize_t written = ::write(client_fd_, data, remaining);
+      if (written < 0) {
+        if (errno == EINTR)
+          continue;
+        return false;
+      }
+      if (written == 0)
+        return false;
+      data += written;
+      remaining -= static_cast<size_t>(written);
+    }
     // Do NOT close client_fd_ here -- keep connection open for persistent IPC.
     // The caller is responsible for calling close_client() when done.
-    return written == static_cast<ssize_t>(payload.size());
+    return true;
   }
 
   void close_client() override {

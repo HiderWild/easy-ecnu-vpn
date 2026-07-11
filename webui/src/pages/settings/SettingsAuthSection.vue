@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
 import { Fingerprint, Key, Server, Shield, User } from 'lucide-vue-next'
+import PasswordField from '../../components/PasswordField.vue'
 import { distributionConfig } from '../../generated/distribution'
 import type { AuthConfig } from '../../stores/config'
 
@@ -34,6 +35,7 @@ const passwordPlaceholder = computed(() =>
     ? '留空表示保留原密码，输入新密码覆盖'
     : '请输入密码',
 )
+const showSavedPasswordOverwriteHint = computed(() => Boolean(authForm.value.password_stored))
 
 function normalizeServerChoice(server: string) {
   return server.trim().replace(/^https?:\/\//i, '').replace(/\/$/, '').toLowerCase()
@@ -176,18 +178,16 @@ watch(
         <label class="mb-1.5 block text-sm text-muted">密码</label>
         <div class="relative">
           <Key class="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted" />
-          <input
+          <PasswordField
             :value="authForm.password"
-            type="password"
+            :model-value="authForm.password"
             autocomplete="new-password"
             :placeholder="passwordPlaceholder"
-            class="w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-4 text-sm text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
+            input-class="w-full rounded-lg border border-border bg-background py-2.5 pl-10 pr-11 text-sm text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
+            :show-saved-password-overwrite-hint="showSavedPasswordOverwriteHint"
             @input="updateAuthField('password', ($event.target as HTMLInputElement).value)"
           />
         </div>
-        <p v-if="authForm.password_stored" class="mt-1 text-xs text-muted">
-          已保存加密密码，仅在需要修改时输入。
-        </p>
       </div>
 
       <div>

@@ -1,9 +1,11 @@
 #include "platform/common/file_system.hpp"
 #include "platform/common/interface_stats.hpp"
+#include "platform/common/logging/log_runtime.hpp"
 #include "platform/common/process_utils.hpp"
 #include "platform/common/runtime_discovery.hpp"
 #include "platform/common/runtime_paths.hpp"
 #include "helper/helper.hpp"
+#include "helper/helper_install_cli.hpp"
 #include "platform/common/helper_platform.hpp"
 #include "cli/console.hpp"
 
@@ -92,7 +94,10 @@ namespace {
 int print_usage() {
   std::cerr << "Usage:\n"
             << "  exv-helper --service\n"
-            << "  exv-helper --oneshot --endpoint <endpoint> --owner <uid-or-sid> --parent-pid <pid>\n";
+            << "  exv-helper --oneshot --endpoint <endpoint> --owner <uid-or-sid> --parent-pid <pid>\n"
+            << "  exv-helper --install-service\n"
+            << "  exv-helper --uninstall-service\n"
+            << "  exv-helper --repair-service\n";
   return 2;
 }
 
@@ -120,6 +125,12 @@ std::optional<int> parse_positive_int(const std::string &value) {
 int main(int argc, char *argv[]) {
   exv::cli::enable_windows_ansi();
 
+  // Emit logs to stdout so launchd captures them via StandardOutPath into
+  // /var/log/exv-helper.log. Without this the helper is silent on failure
+  // (bind errors, crashes) and the only symptom is the service appearing
+  // installed-but-unavailable. configure_default_logging is idempotent.
+  exv::platform::logging::configure_default_logging(true);
+
   if (argc > 1) {
     std::string arg = argv[1];
 
@@ -132,6 +143,16 @@ int main(int argc, char *argv[]) {
 #else
       return exv::helper::daemon_main(options);
 #endif
+    }
+
+    if (arg == "--install-service") {
+      return exv::helper::run_install_cli("install-service", {});
+    }
+    if (arg == "--uninstall-service") {
+      return exv::helper::run_install_cli("uninstall-service", {});
+    }
+    if (arg == "--repair-service") {
+      return exv::helper::run_install_cli("repair-service", {});
     }
 
     if (arg == "--oneshot") {

@@ -258,7 +258,27 @@ async function saveDirtyChanges() {
     saveHover.value = false
     ui.addToast('设置修改已保存', 'success')
   } catch (error) {
-    ui.requestError({ title: '保存修改失败', message: normalizeError(error).message })
+    const normalized = normalizeError(error)
+    if (normalized.recommended_action === 'restart_core' && window.exv?.core.restart) {
+      ui.requestError({
+        title: '保存修改失败',
+        message: normalized.message,
+        primaryLabel: '重启内核并重试',
+        onPrimary: async () => {
+          try {
+            await window.exv?.core.restart?.()
+            await saveDirtyChanges()
+          } catch (restartError) {
+            ui.requestError({
+              title: '重启内核失败',
+              message: normalizeError(restartError).message,
+            })
+          }
+        },
+      })
+    } else {
+      ui.requestError({ title: '保存修改失败', message: normalized.message })
+    }
   } finally {
     savingSettings.value = false
   }

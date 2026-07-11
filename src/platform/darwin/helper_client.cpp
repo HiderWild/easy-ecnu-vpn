@@ -89,14 +89,36 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
     return nlohmann::json{{"ok", false},
                           {"message", "Failed to send helper request"}};
   }
-  shutdown(fd, SHUT_WR);
 
+  // Read the newline-delimited response with a bounded timeout. Do NOT
+  // shutdown(SHUT_WR) here: on the one-shot helper, half-closing the write
+  // direction makes the daemon's next read() return EOF, which (in the
+  // absence of an active core lease) triggers immediate cleanup and exit.
+  // That races the response back to the client and, on a slow root-spawned
+  // helper, reliably loses it. Framing on '\n' is sufficient: the helper
+  // writes exactly one newline-terminated JSON object per response.
   char buffer[1024];
   ssize_t n = 0;
-  while ((n = read(fd, buffer, sizeof(buffer))) > 0) {
-    raw.append(buffer, static_cast<size_t>(n));
-    if (raw.find('\n') != std::string::npos)
+  const int kResponseTimeoutMs = 10000;
+  while (true) {
+    pollfd pfd{};
+    pfd.fd = fd;
+    pfd.events = POLLIN;
+    int ready = poll(&pfd, 1, kResponseTimeoutMs);
+    if (ready <= 0) {
       break;
+    }
+    if (pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) {
+      break;
+    }
+    n = read(fd, buffer, sizeof(buffer));
+    if (n <= 0) {
+      break;
+    }
+    raw.append(buffer, static_cast<size_t>(n));
+    if (raw.find('\n') != std::string::npos) {
+      break;
+    }
   }
   close(fd);
 

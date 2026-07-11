@@ -1,7 +1,0 @@
-build/
-__pycache__/
-.git/
-.claude/
-.omc/
-docs/
-*.md

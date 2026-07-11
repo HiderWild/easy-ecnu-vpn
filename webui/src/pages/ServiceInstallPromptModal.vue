@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
-import { Eye, KeyRound, ShieldCheck, TriangleAlert } from 'lucide-vue-next'
+import { KeyRound, ShieldCheck, TriangleAlert } from 'lucide-vue-next'
+import PasswordField from '../components/PasswordField.vue'
 import type { DesktopModalPayload } from '../../host/shared/host-contract'
 
 const busy = ref(false)
@@ -9,7 +10,6 @@ const payload = ref<DesktopModalPayload | null>(null)
 const route = useRoute()
 const password = ref('')
 const error = ref('')
-const revealing = ref(false)
 const closeChoice = ref<'tray' | 'quit'>('tray')
 const rememberCloseChoice = ref(false)
 const resolved = ref(false)
@@ -76,30 +76,16 @@ function submitCloseChoice() {
         </div>
       </div>
 
-      <div class="relative mt-3.5">
-        <input
+      <div class="mt-3.5">
+        <PasswordField
           v-model="password"
-          :type="revealing ? 'text' : 'password'"
           autocomplete="current-password"
           autofocus
-          class="h-10 w-full rounded-lg border border-border bg-bg px-3 pr-11 text-sm text-foreground outline-none transition-colors focus:border-accent"
+          input-class="h-10 w-full rounded-lg border border-border bg-bg px-3 pr-11 text-sm text-foreground outline-none transition-colors focus:border-accent"
           placeholder="密码"
           @input="error = ''"
           @keydown.esc.prevent="resolvePrompt(null)"
         />
-        <button
-          type="button"
-          class="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-muted transition-colors hover:bg-surface/80 hover:text-foreground"
-          title="按住显示密码"
-          aria-label="按住显示密码"
-          @pointerdown.prevent="revealing = true"
-          @pointerup="revealing = false"
-          @pointercancel="revealing = false"
-          @pointerleave="revealing = false"
-          @blur="revealing = false"
-        >
-          <Eye class="h-4 w-4" />
-        </button>
       </div>
       <p v-if="error" class="mt-2 text-xs text-destructive">{{ error }}</p>
 

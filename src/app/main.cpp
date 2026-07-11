@@ -1,6 +1,7 @@
 #include "cli/cli_entrypoint.hpp"
 #include "core/app_api/app_api.hpp"
 #include "core/core_process.hpp"
+#include "observability/log_facade.hpp"
 #include "platform/common/file_system.hpp"
 #include "runtime/runtime_context.hpp"
 
@@ -37,7 +38,22 @@ int main(int argc, char *argv[]) {
         use_stdin = false;
       }
     }
-    return exv::core::core_process_main(config_dir, home_dir, use_stdin);
+    try {
+      return exv::core::core_process_main(config_dir, home_dir, use_stdin);
+    } catch (const std::exception &ex) {
+      exv::observability::LogFacade::error(
+          std::string("Core process terminated by uncaught exception: ") +
+          ex.what());
+      std::cerr << "fatal: core process terminated by uncaught exception: "
+                << ex.what() << std::endl;
+      return 1;
+    } catch (...) {
+      exv::observability::LogFacade::error(
+          "Core process terminated by unknown uncaught exception");
+      std::cerr << "fatal: core process terminated by unknown uncaught exception"
+                << std::endl;
+      return 1;
+    }
   }
 
   runtime::bootstrap();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "app/ui_shell/renderer_assets.hpp"
+#include "app/ui_shell/tray_status_snapshot.hpp"
 
 #include <functional>
 #include <string>
@@ -15,6 +16,10 @@ struct UiWindowConfig {
   bool enable_dev_tools = false;
   std::function<void()> pump_core_events;
   std::function<bool()> is_vpn_connected;
+  bool start_hidden = true;
+  std::function<TrayStatusSnapshot()> tray_status_snapshot_provider;
+  std::function<void()> disconnect_vpn_in_background;
+  std::function<void(const std::function<void()> &)> poll_wake_requests;
   std::string state_dir;
 };
 

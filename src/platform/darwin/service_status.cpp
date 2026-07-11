@@ -8,6 +8,9 @@
 #include "helper/helper.hpp"
 #include "platform/common/helper_platform.hpp"
 
+#include <cstdlib>
+#include <string>
+
 namespace exv {
 namespace platform {
 namespace {
@@ -58,6 +61,23 @@ ServiceStatusSnapshot current_service_status() {
                                        {"direct_fallback", false},
                                        {"helper_binary", true}};
   return status;
+}
+
+bool try_start_helper_service() {
+  const auto &config = helper_platform_config();
+  std::string label = config.service_label;
+  if (label.empty()) {
+    return false;
+  }
+  std::string domain = "system";
+  const auto slash = label.find('/');
+  if (slash != std::string::npos) {
+    domain = label.substr(0, slash);
+    label = label.substr(slash + 1);
+  }
+  std::string cmd =
+      "launchctl kickstart -k " + domain + "/" + label + " >/dev/null 2>&1";
+  return std::system(cmd.c_str()) == 0;
 }
 
 } // namespace platform

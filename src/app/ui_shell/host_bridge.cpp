@@ -24,7 +24,8 @@ bool is_allowed_host_action(std::string_view action) {
   if (action == "window.resolveClosePrompt" || action == "window.setMode" ||
       action == "window.getClosePreference" ||
       action == "window.setClosePreference" ||
-      action == "window.resetClosePreference") {
+      action == "window.resetClosePreference" ||
+      action == "core.restart") {
     return true;
   }
   const auto &desktop_actions = exv::contracts::generated::DESKTOP_RPC_ACTIONS;

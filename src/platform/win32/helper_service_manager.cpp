@@ -7,6 +7,7 @@
 
 #include "observability/log_facade.hpp"
 #include "platform/common/helper_platform.hpp"
+#include "platform/common/service_status.hpp"
 #include "cli/console.hpp"
 
 #include <algorithm>
@@ -21,6 +22,7 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <tlhelp32.h>
 
 namespace exv {
 namespace platform {
@@ -177,6 +179,43 @@ bool wait_for_service_deleted_or_marked(SC_HANDLE scm, const char *service_name,
     Sleep(100);
   }
   return false;
+}
+
+// Terminate orphaned one-shot exv-helper.exe processes left behind by a
+// crashed/killed previous instance, so a subsequent connect is not confused by
+// a stale single-instance lock or pipe. The service helper process (if any)
+// is excluded — the SCM owns its lifecycle.
+void terminate_orphan_oneshot_helpers(DWORD service_pid) {
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) {
+    return;
+  }
+  PROCESSENTRY32W entry;
+  entry.dwSize = sizeof(entry);
+  if (Process32FirstW(snapshot, &entry)) {
+    do {
+      if (_wcsicmp(entry.szExeFile, L"exv-helper.exe") != 0) {
+        continue;
+      }
+      if (entry.th32ProcessID == GetCurrentProcessId()) {
+        continue;
+      }
+      if (service_pid != 0 && entry.th32ProcessID == service_pid) {
+        continue;
+      }
+      HANDLE proc = OpenProcess(PROCESS_TERMINATE, FALSE, entry.th32ProcessID);
+      if (proc) {
+        if (TerminateProcess(proc, 1)) {
+          WaitForSingleObject(proc, 2000);
+          exv::observability::LogFacade::info(
+              "Uninstall: terminated orphaned one-shot helper pid=" +
+              std::to_string(entry.th32ProcessID));
+        }
+        CloseHandle(proc);
+      }
+    } while (Process32NextW(snapshot, &entry));
+  }
+  CloseHandle(snapshot);
 }
 
 } // namespace
@@ -377,6 +416,31 @@ int uninstall_helper_service(const HelperServiceManagerContext &context) {
     return 1;
   }
 
+  // Full artifact cleanup: remove the stable helper binary and terminate any
+  // orphaned one-shot exv-helper.exe processes left behind by a crashed/killed
+  // previous instance, then re-probe to confirm the uninstall is complete. This
+  // keeps the "not installed" state trustworthy so the backend resolver may
+  // safely fall back to a one-shot helper on the next connect.
+  {
+    std::error_code remove_ec;
+    std::filesystem::remove(platform_config.default_service_binary_path,
+                            remove_ec);
+    if (remove_ec) {
+      exv::observability::LogFacade::warn(
+          "Could not remove stable helper binary: " + remove_ec.message());
+    }
+  }
+  terminate_orphan_oneshot_helpers(
+      current_process_is_service ? static_cast<DWORD>(GetCurrentProcessId())
+                                 : process_status.dwProcessId);
+
+  const ServiceStatusSnapshot after = current_service_status();
+  if (after.installed) {
+    exv::observability::LogFacade::error(
+        "Uninstall completed but the service registration still reports "
+        "installed.");
+    return 1;
+  }
   std::cout << "Helper service uninstalled.\n";
   return 0;
 }

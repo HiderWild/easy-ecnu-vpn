@@ -44,6 +44,23 @@ build/<platform>/webview/package/EXV
 - `bin/exv-helper` / `bin/exv-helper.exe`：特权 helper。
 - `webui/index.html`：打包后的 Vue renderer。
 - `WebView2Loader.dll`：Windows 包内 WebView2 loader。
+- `EXV.app`：macOS 包内的标准 `.app` bundle，可直接拖入「应用程序」文件夹安装。
+
+macOS 桌面包在 `build/macos/webview/package/EXV/` 下额外生成标准 `.app` bundle：
+
+```text
+EXV.app/
+  Contents/
+    Info.plist                 # CFBundleName、CFBundleIdentifier、版本号
+    MacOS/EXV                  # exv-ui 桌面壳二进制
+    Resources/
+      exv-ui.args              # 相对路径，运行时由桌面壳解析
+      bin/exv, bin/exv-helper  # core 与特权 helper
+      webui/index.html         # Vue renderer
+      icon.icns
+```
+
+`exv-ui.args` 内为相对路径（`bin/exv`、`webui/index.html`），`exv-ui` 在运行时依据自身 `Contents/Resources` 目录解析，因此 `EXV.app` 可整体拖动到任意路径（含「应用程序」文件夹）后直接启动。`Info.plist` 中的版本号取自 `CMakeLists.txt` 的 `project(exv VERSION ...)`。
 
 Windows release packaging 输出到：
 

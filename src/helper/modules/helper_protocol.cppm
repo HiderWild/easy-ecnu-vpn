@@ -19,12 +19,6 @@ enum class HelperOp : std::uint32_t {
   AcquireCoreLease = 10,
   KeepAlive = 11,
   ReleaseCoreLease = 12,
-  InstallService = 13,
-  UninstallService = 14,
-  ExportCleanupLease = 15,
-  HandoffSession = 16,
-  FinalizeHandoff = 17,
-  RepairService = 18,
 };
 
 enum class HelperMode : std::uint32_t {
@@ -37,7 +31,7 @@ constexpr std::uint32_t helper_op_code(HelperOp op) noexcept {
 }
 
 constexpr std::uint32_t helper_op_count() noexcept {
-  return 18;
+  return 12;
 }
 
 constexpr std::uint32_t helper_mode_code(HelperMode mode) noexcept {
@@ -53,12 +47,6 @@ constexpr bool helper_op_requires_session(HelperOp op) noexcept {
   case HelperOp::AcquireCoreLease:
   case HelperOp::KeepAlive:
   case HelperOp::ReleaseCoreLease:
-  case HelperOp::InstallService:
-  case HelperOp::UninstallService:
-  case HelperOp::RepairService:
-  case HelperOp::ExportCleanupLease:
-  case HelperOp::HandoffSession:
-  case HelperOp::FinalizeHandoff:
     return false;
   case HelperOp::PrepareTunnelDevice:
   case HelperOp::ApplyTunnelConfig:

@@ -105,35 +105,4 @@ void TunnelController::Impl::release_core_lease() {
         update_snapshot();
     }
 
-bool TunnelController::Impl::replace_helper_for_handoff(
-        std::shared_ptr<exv::helper::HelperClient> helper,
-        std::shared_ptr<exv::platform::PlatformNetworkOps> net_ops,
-        std::string core_lease_id,
-        std::string helper_mode,
-        std::string helper_endpoint) {
-        if (!helper || !helper->is_connected() || !net_ops ||
-            core_lease_id.empty() || session_id_.value.empty()) {
-            return false;
-        }
-
-        stop_core_lease_keepalive();
-
-        helper_ = std::move(helper);
-        net_ops_ = std::move(net_ops);
-        core_lease_id_ = std::move(core_lease_id);
-        helper_mode_ = std::move(helper_mode);
-        helper_endpoint_ = std::move(helper_endpoint);
-        helper_status_override_.clear();
-        helper_connected_seen_ = true;
-
-        if (auto delegated_ops = as_helper_delegating_ops(net_ops_)) {
-            delegated_ops->set_session(session_id_);
-        }
-
-        start_core_lease_keepalive();
-        update_snapshot();
-        notify_status();
-        return true;
-    }
-
 } // namespace exv::core

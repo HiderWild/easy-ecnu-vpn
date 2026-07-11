@@ -49,6 +49,31 @@ bool is_inside_or_equal(const std::filesystem::path &path,
   return false;
 }
 
+std::filesystem::path packaged_options_root(
+    const std::filesystem::path &executable_path) {
+  const std::filesystem::path executable_dir = executable_path.parent_path();
+  const std::filesystem::path contents_dir = executable_dir.parent_path();
+  if (executable_dir.filename() == "MacOS" &&
+      contents_dir.filename() == "Contents") {
+    const std::filesystem::path resources_dir = contents_dir / "Resources";
+    if (std::filesystem::exists(resources_dir / "exv-ui.args")) {
+      return resources_dir;
+    }
+  }
+  return executable_dir;
+}
+
+bool has_explicit_ui_shell_option(int argc, char **argv) {
+  for (int i = 1; i < argc; ++i) {
+    std::string_view arg = argv[i] ? argv[i] : "";
+    if (arg == "--renderer-url" || arg == "--renderer-index" ||
+        arg == "--exv" || arg == "--state-dir" || arg == "--devtools") {
+      return true;
+    }
+  }
+  return false;
+}
+
 std::string validate_packaged_file(const std::string &value,
                                    const std::filesystem::path &package_root,
                                    std::string_view label) {
@@ -83,6 +108,8 @@ UiShellOptions parse_ui_shell_options(int argc, char **argv) {
       options.state_dir = argv[++i];
     } else if (arg == "--devtools") {
       options.enable_dev_tools = true;
+    } else if (arg == "--show-window") {
+      options.start_hidden = false;
     }
   }
   return options;
@@ -123,7 +150,7 @@ UiShellOptions parse_ui_shell_args_file(
 
 UiShellOptions load_packaged_ui_shell_options(
     const std::filesystem::path &executable_path) {
-  const std::filesystem::path package_root = executable_path.parent_path();
+  const std::filesystem::path package_root = packaged_options_root(executable_path);
   if (package_root.empty()) {
     return {};
   }
@@ -133,13 +160,15 @@ UiShellOptions load_packaged_ui_shell_options(
 UiShellOptions resolve_ui_shell_options(
     int argc, char **argv, const std::filesystem::path &executable_path) {
   UiShellOptions options = parse_ui_shell_options(argc, argv);
-  if (argc > 1 || validate_ui_shell_options(options).empty()) {
+  if (has_explicit_ui_shell_option(argc, argv) ||
+      validate_ui_shell_options(options).empty()) {
     return options;
   }
 
-  const std::filesystem::path package_root = executable_path.parent_path();
+  const std::filesystem::path package_root = packaged_options_root(executable_path);
   UiShellOptions packaged_options =
       load_packaged_ui_shell_options(executable_path);
+  packaged_options.start_hidden = options.start_hidden;
   if (validate_ui_shell_options(packaged_options).empty() &&
       validate_packaged_ui_shell_options(packaged_options, package_root).empty()) {
     return packaged_options;

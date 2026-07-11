@@ -3,6 +3,7 @@ import { ref, computed, onMounted, watch } from 'vue'
 import { useConfigStore, type AuthConfig } from '../stores/config'
 import { useUiStore } from '../stores/ui'
 import { Shield, User, Key, Fingerprint, Server } from 'lucide-vue-next'
+import PasswordField from '../components/PasswordField.vue'
 import { distributionConfig } from '../generated/distribution'
 
 const config = useConfigStore()
@@ -155,17 +156,14 @@ async function save() {
           <label class="block text-sm text-muted mb-1.5">密码</label>
           <div class="relative">
             <Key class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted" />
-            <input
+            <PasswordField
               v-model="form.password"
-              type="password"
               autocomplete="new-password"
               :placeholder="passwordPlaceholder"
-              class="w-full bg-background border border-border rounded-lg pl-10 pr-4 py-2.5 text-sm text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
+              input-class="w-full bg-background border border-border rounded-lg pl-10 pr-11 py-2.5 text-sm text-foreground placeholder:text-muted/50 focus:outline-none focus:border-accent"
+              :show-saved-password-overwrite-hint="form.password_stored"
             />
           </div>
-          <p v-if="form.password_stored" class="text-xs text-muted mt-1">
-            已保存加密密码，仅在需要修改时输入。
-          </p>
         </div>
 
         <!-- Remember Password -->

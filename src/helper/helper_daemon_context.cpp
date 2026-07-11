@@ -5,18 +5,13 @@
 namespace exv::helper {
 
 std::unique_ptr<exv::helper::HelperHandler> create_helper_handler_for_daemon(
-    const DaemonOptions &options, HelperNetworkOpsFactory network_ops_factory,
-    HelperServiceOpsFactory service_ops_factory) {
+    const DaemonOptions &options, HelperNetworkOpsFactory network_ops_factory) {
   std::shared_ptr<exv::helper::HelperNetworkOps> network_ops =
       network_ops_factory ? network_ops_factory()
                           : exv::helper::create_helper_network_ops();
-  std::shared_ptr<exv::helper::HelperServiceOps> service_ops =
-      service_ops_factory ? service_ops_factory()
-                          : exv::helper::create_helper_service_ops();
 
   auto handler = std::make_unique<exv::helper::HelperHandler>(
-      exv::helper::HelperLifecyclePolicy{}, std::move(network_ops),
-      std::move(service_ops));
+      exv::helper::HelperLifecyclePolicy{}, std::move(network_ops));
 
   exv::helper::HelperStartupContext startup_context;
   startup_context.launch_mode = options.mode;

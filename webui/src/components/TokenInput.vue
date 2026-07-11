@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { Eye, EyeOff, X } from 'lucide-vue-next'
+import { X } from 'lucide-vue-next'
+import PasswordField from './PasswordField.vue'
 
 const props = withDefaults(defineProps<{
   modelValue: string | string[]
@@ -16,7 +17,6 @@ const emit = defineEmits<{
   (event: 'update:modelValue', value: string[]): void
 }>()
 
-const show = ref(false)
 const pendingToken = ref('')
 
 const tokens = computed(() => Array.isArray(props.modelValue) ? props.modelValue : [])
@@ -85,20 +85,13 @@ function onTokenPaste(event: ClipboardEvent) {
   </div>
 
   <div v-else class="relative">
-    <input
-      :type="show ? 'text' : 'password'"
+    <PasswordField
       :value="typeof modelValue === 'string' ? modelValue : ''"
+      :model-value="typeof modelValue === 'string' ? modelValue : ''"
       :placeholder="placeholder"
-      class="w-full bg-bg border border-border rounded-lg px-3 py-2 pr-10 text-sm text-foreground font-mono placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
+      input-class="w-full bg-bg border border-border rounded-lg px-3 py-2 pr-10 text-sm text-foreground font-mono placeholder:text-muted focus:outline-none focus:border-accent/50 transition-colors"
+      reveal-button-class="right-1.5"
       @input="onInput"
     />
-    <button
-      type="button"
-      class="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted hover:text-foreground transition-colors"
-      @click="show = !show"
-    >
-      <EyeOff v-if="show" class="w-4 h-4" />
-      <Eye v-else class="w-4 h-4" />
-    </button>
   </div>
 </template>

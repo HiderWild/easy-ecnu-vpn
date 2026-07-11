@@ -157,7 +157,12 @@ export const DESKTOP_RPC_ERROR_CODES = [
   "invalid_request",
   "log_clear_failed",
   "connection_failed",
-  "vpn_start_failed"
+  "vpn_start_failed",
+  "elevation_denied",
+  "launch_failed",
+  "helper_not_found",
+  "needs_elevation",
+  "vpn_disconnect_timeout"
 ] as const
 export const DESKTOP_RPC_ERROR_CODE_MAP = {
   "helperUnavailable": "helper_unavailable",
@@ -191,7 +196,12 @@ export const DESKTOP_RPC_ERROR_CODE_MAP = {
   "invalidRequest": "invalid_request",
   "logClearFailed": "log_clear_failed",
   "connectionFailed": "connection_failed",
-  "vpnStartFailed": "vpn_start_failed"
+  "vpnStartFailed": "vpn_start_failed",
+  "elevationDenied": "elevation_denied",
+  "launchFailed": "launch_failed",
+  "helperNotFound": "helper_not_found",
+  "needsElevation": "needs_elevation",
+  "vpnDisconnectTimeout": "vpn_disconnect_timeout"
 } as const
 
 export const CONFIG_ACTIONS = [
@@ -487,13 +497,7 @@ export const HELPER_OPS = [
   "Inspect",
   "AcquireCoreLease",
   "KeepAlive",
-  "ReleaseCoreLease",
-  "InstallService",
-  "UninstallService",
-  "ExportCleanupLease",
-  "HandoffSession",
-  "FinalizeHandoff",
-  "RepairService"
+  "ReleaseCoreLease"
 ] as const
 export const HELPER_OP_CONTRACTS = [
   {
@@ -578,48 +582,6 @@ export const HELPER_OP_CONTRACTS = [
     "code": 12,
     "request": "ReleaseCoreLeaseRequest",
     "response": "ReleaseCoreLeaseResponse",
-    "requires_session": false
-  },
-  {
-    "name": "InstallService",
-    "code": 13,
-    "request": "InstallServiceRequest",
-    "response": "InstallServiceResponse",
-    "requires_session": false
-  },
-  {
-    "name": "UninstallService",
-    "code": 14,
-    "request": "UninstallServiceRequest",
-    "response": "UninstallServiceResponse",
-    "requires_session": false
-  },
-  {
-    "name": "ExportCleanupLease",
-    "code": 15,
-    "request": "ExportCleanupLeaseRequest",
-    "response": "ExportCleanupLeaseResponse",
-    "requires_session": false
-  },
-  {
-    "name": "HandoffSession",
-    "code": 16,
-    "request": "HandoffSessionRequest",
-    "response": "HandoffSessionResponse",
-    "requires_session": false
-  },
-  {
-    "name": "FinalizeHandoff",
-    "code": 17,
-    "request": "FinalizeHandoffRequest",
-    "response": "FinalizeHandoffResponse",
-    "requires_session": false
-  },
-  {
-    "name": "RepairService",
-    "code": 18,
-    "request": "RepairServiceRequest",
-    "response": "RepairServiceResponse",
     "requires_session": false
   }
 ] as const

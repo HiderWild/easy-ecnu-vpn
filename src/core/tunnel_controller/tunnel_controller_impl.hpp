@@ -59,12 +59,6 @@ struct TunnelController::Impl {
   void do_core_lease_keepalive();
   bool acquire_core_lease();
   void release_core_lease();
-  bool replace_helper_for_handoff(
-      std::shared_ptr<exv::helper::HelperClient> helper,
-      std::shared_ptr<exv::platform::PlatformNetworkOps> net_ops,
-      std::string core_lease_id,
-      std::string helper_mode,
-      std::string helper_endpoint);
 
   bool prepare_tunnel_device_for_session(
       exv::platform::TunnelDeviceDescriptor *device);

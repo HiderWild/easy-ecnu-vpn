@@ -28,18 +28,6 @@ namespace exv {
 namespace platform {
 namespace {
 
-std::string random_hex(size_t bytes) {
-  std::random_device rd;
-  std::ostringstream out;
-  out << std::hex;
-  for (size_t i = 0; i < bytes; ++i) {
-    unsigned int value = rd() & 0xffU;
-    if (value < 16)
-      out << '0';
-    out << value;
-  }
-  return out.str();
-}
 
 bool wait_for_helper_pipe_available(const std::string &endpoint,
                                     DWORD *last_error) {
@@ -219,8 +207,12 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
     return backend;
   }
 
-  std::string session_id = random_hex(8);
-  backend.endpoint = "\\\\.\\pipe\\exv-oneshot-" + session_id;
+  // Fixed endpoint: the one-shot helper is single-instance (asserted at
+  // startup), so a per-session random endpoint is unnecessary and would defeat
+  // reuse/reconnect. A second instance fails the single-instance assertion and
+  // exits before binding this name.
+  std::string session_id = "fixed";
+  backend.endpoint = "\\\\.\\pipe\\exv-oneshot";
   backend.owner = current_owner_sid();
   backend.parent_pid = static_cast<int>(GetCurrentProcessId());
   if (backend.owner.empty()) {

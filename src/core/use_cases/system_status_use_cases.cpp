@@ -1,16 +1,15 @@
 #include "core/use_cases/system_status_use_cases.hpp"
 
 #include "core/config/config_platform_view.hpp"
-#include "core/connection/connection_attempt.hpp"
 #include "core/vpn/vpn.hpp"
-#include "helper/common/helper_client.hpp"
-#include "helper/common/helper_connector.hpp"
 #include "observability/log_facade.hpp"
 #include "platform/common/backend_resolver.hpp"
 #include "platform/common/driver_status.hpp"
+#include "platform/common/elevated_service_launcher.hpp"
 #include "platform/common/helper_service_manager.hpp"
 #include "platform/common/logging/log_runtime.hpp"
 #include "platform/common/process_utils.hpp"
+#include "platform/common/process_control.hpp"
 #include "platform/common/runtime_paths.hpp"
 #include "platform/common/runtime_status.hpp"
 #include "platform/common/service_status.hpp"
@@ -34,16 +33,6 @@
 namespace exv::core {
 namespace {
 
-template <typename ServiceResponse>
-nlohmann::json service_operation_payload(const ServiceResponse &response,
-                                         nlohmann::json service_status) {
-  return nlohmann::json{{"operation",
-                         {{"success", response.success},
-                          {"exit_code", response.exit_code},
-                          {"message", response.message}}},
-                        {"service_status", std::move(service_status)}};
-}
-
 UseCaseResult fail_with_payload(const char *error_code, std::string message,
                                 nlohmann::json payload) {
   UseCaseResult result = UseCaseResult::fail(error_code, std::move(message));
@@ -51,23 +40,50 @@ UseCaseResult fail_with_payload(const char *error_code, std::string message,
   return result;
 }
 
-template <typename ServiceResponse>
-UseCaseResult service_op_result(const ServiceResponse &response,
-                                const char *error_code,
-                                const char *fallback_message) {
-  nlohmann::json payload{{"operation",
-                          {{"success", response.success},
-                           {"exit_code", response.exit_code},
-                           {"message", response.message}}},
-                         {"service_status",
-                          exv::platform::service_status_to_json(
-                              exv::platform::current_service_status())}};
-  if (response.success) {
-    return UseCaseResult::ok(std::move(payload));
+// Build the service-status payload returned by the elevated service ops. Mirrors
+// the {"service_status": {...}} shape the prior helper-daemon path produced, so
+// callers/UI do not need to change how they read the result.
+nlohmann::json service_status_payload(
+    const exv::platform::ServiceStatusSnapshot &snapshot) {
+  return nlohmann::json{
+      {"service_status", exv::platform::service_status_to_json(snapshot)}};
+}
+
+// Launch an elevated helper process (`exv-helper.exe --<subcommand>`) to perform
+// a privileged service install/uninstall/repair, then poll the live service
+// status until it reflects the desired end state or the timeout elapses.
+// `launch_elevated_service_op` is async: it returns {launched=true} once the
+// elevated process is started; the elevated process then does the SCM work.
+UseCaseResult run_elevated_service_op(const std::string &subcommand,
+                                      const char *error_code,
+                                      const std::string &error_message,
+                                      bool desired_installed) {
+  exv::platform::ElevatedServiceLaunchResult launch =
+      exv::platform::launch_elevated_service_op(subcommand);
+  if (!launch.launched) {
+    return UseCaseResult::fail(
+        launch.code.empty() ? error_code : launch.code,
+        launch.message.empty() ? error_message : launch.message);
   }
-  return fail_with_payload(
-      error_code, response.message.empty() ? fallback_message : response.message,
-      std::move(payload));
+  // The elevated process runs async. Poll service status until it reflects the
+  // desired end state or we time out.
+  constexpr int kMaxAttempts = 60; // ~15s at 250ms
+  for (int i = 0; i < kMaxAttempts; ++i) {
+    exv::platform::ServiceStatusSnapshot snap =
+        exv::platform::current_service_status();
+    if (desired_installed && snap.installed && snap.available) {
+      return UseCaseResult::ok(service_status_payload(snap));
+    }
+    if (!desired_installed && !snap.installed) {
+      return UseCaseResult::ok(service_status_payload(snap));
+    }
+    exv::platform::sleep_ms(250);
+  }
+  // Timed out waiting for the desired state. Report current status as a
+  // non-failure "still in progress" result so the caller can re-check.
+  exv::platform::ServiceStatusSnapshot snap =
+      exv::platform::current_service_status();
+  return UseCaseResult::ok(service_status_payload(snap));
 }
 
 std::string env_value(const char *name) {
@@ -318,105 +334,7 @@ nlohmann::json cli_status_json(std::string warning = {}) {
                         {"warning", warning}};
 }
 
-template <typename Fn>
-UseCaseResult with_helper_service_lease(const std::string &purpose,
-                                        bool bootstrap_oneshot,
-                                        const std::string &preferred_mode,
-                                        Fn &&fn) {
-  exv::platform::BackendResolveOptions options;
-  options.preferred_mode = preferred_mode;
-  options.allow_oneshot = bootstrap_oneshot;
-  options.allow_service_start = false;
-  if (bootstrap_oneshot) {
-    options.start_oneshot = true;
-    const auto exv_path =
-        std::filesystem::path(exv::platform::get_executable_path());
-#ifdef _WIN32
-    options.helper_path = (exv_path.parent_path() / "exv-helper.exe").string();
-#else
-    options.helper_path = (exv_path.parent_path() / "exv-helper").string();
-#endif
-  }
-
-  nlohmann::json backend = exv::platform::resolve_backend(options);
-  if (!backend.value("ok", false)) {
-    return UseCaseResult::fail(
-        backend.value("code", std::string("helper_unavailable")),
-        backend.value(
-            "message",
-            std::string(
-                "No helper instance is available for privileged service maintenance.")));
-  }
-
-  auto connector = exv::helper::HelperConnector::create();
-  exv::helper::HelperConnectorConfig config;
-  const std::string backend_mode = backend.value("backend", std::string());
-  config.mode = backend_mode == "oneshot"
-                    ? exv::helper::ConnectorMode::Transient
-                    : exv::helper::ConnectorMode::Resident;
-  config.pipe_endpoint = backend.value("endpoint", std::string());
-  config.connect_timeout_ms = 500;
-
-  auto client = connector->connect(config);
-  if (!client || !client->is_connected()) {
-    return UseCaseResult::fail(
-        "helper_unavailable",
-        "No helper instance is available for privileged service maintenance.");
-  }
-
-  (void)client->hello(exv::helper::HelloRequest{});
-
-  exv::helper::AcquireCoreLeaseRequest acquire;
-  acquire.core_pid = exv::connection_attempt::current_process_id();
-  acquire.purpose = purpose;
-  auto lease = client->acquire_core_lease(acquire);
-  if (!lease.accepted || lease.lease_id.empty()) {
-    return UseCaseResult::fail(
-        "core_lease_unavailable",
-        "Helper could not acquire a core lease for service maintenance.");
-  }
-
-  auto release = [&] {
-    exv::helper::ReleaseCoreLeaseRequest release_req;
-    release_req.lease_id = lease.lease_id;
-    release_req.exit_if_oneshot = backend_mode == "oneshot";
-    (void)client->release_core_lease(release_req);
-  };
-
-  UseCaseResult result = fn(*client);
-  release();
-  return result;
-}
-
 } // namespace
-
-UseCaseResult finalize_service_uninstall_result(
-    const exv::helper::UninstallServiceResponse &response,
-    nlohmann::json service_status) {
-  nlohmann::json payload =
-      service_operation_payload(response, std::move(service_status));
-  constexpr const char *kErrorCode = "service_uninstall_failed";
-  constexpr const char *kFallbackMessage =
-      "Helper service uninstallation failed.";
-
-  if (!response.success) {
-    return fail_with_payload(
-        kErrorCode,
-        response.message.empty() ? kFallbackMessage : response.message,
-        std::move(payload));
-  }
-
-  if (!payload.value("service_status", nlohmann::json::object())
-           .value("installed", true)) {
-    return UseCaseResult::ok(std::move(payload));
-  }
-
-  return fail_with_payload(
-      kErrorCode,
-      "Helper service uninstallation did not remove the service registration.",
-      std::move(payload));
-}
-
 SystemStatusUseCases::SystemStatusUseCases()
     : SystemStatusUseCases(exv::platform::get_config_dir()) {}
 
@@ -539,11 +457,9 @@ UseCaseResult SystemStatusUseCases::uninstall_cli() {
 }
 
 UseCaseResult SystemStatusUseCases::install_helper() {
-  return with_helper_service_lease("service.install", true, "auto", [](auto &client) {
-    return service_op_result(
-        client.install_service(exv::helper::InstallServiceRequest{}),
-        "service_install_failed", "Helper service installation failed.");
-  });
+  return run_elevated_service_op("install-service", "service_install_failed",
+                                 "Helper service installation failed.",
+                                 /*desired_installed=*/true);
 }
 
 UseCaseResult SystemStatusUseCases::uninstall_helper() {
@@ -554,33 +470,15 @@ UseCaseResult SystemStatusUseCases::uninstall_helper() {
         "vpn_session_active",
         "Disconnect the VPN session before uninstalling the helper service.");
   }
-  auto self_cleanup = with_helper_service_lease(
-      "service.uninstall", false, "service", [](auto &client) {
-        auto response =
-            client.uninstall_service(exv::helper::UninstallServiceRequest{});
-        return finalize_service_uninstall_result(
-            response, exv::platform::service_status_to_json(
-                          exv::platform::current_service_status()));
-      });
-  if (self_cleanup.success || self_cleanup.error_code == "vpn_session_active") {
-    return self_cleanup;
-  }
-  return with_helper_service_lease(
-      "service.uninstall.fallback", true, "oneshot", [](auto &client) {
-        auto response =
-            client.uninstall_service(exv::helper::UninstallServiceRequest{});
-        return finalize_service_uninstall_result(
-            response, exv::platform::service_status_to_json(
-                          exv::platform::current_service_status()));
-      });
+  return run_elevated_service_op("uninstall-service", "service_uninstall_failed",
+                                 "Helper service uninstallation failed.",
+                                 /*desired_installed=*/false);
 }
 
 UseCaseResult SystemStatusUseCases::repair_helper() {
-  return with_helper_service_lease("service.repair", true, "oneshot", [](auto &client) {
-    return service_op_result(
-        client.repair_service(exv::helper::RepairServiceRequest{}),
-        "service_repair_failed", "Helper service repair failed.");
-  });
+  return run_elevated_service_op("repair-service", "service_repair_failed",
+                                 "Helper service repair failed.",
+                                 /*desired_installed=*/true);
 }
 
 } // namespace exv::core

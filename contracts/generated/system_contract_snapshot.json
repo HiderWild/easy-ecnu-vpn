@@ -475,21 +475,7 @@
         "KeepAliveResponse",
         "ReleaseCoreLeaseRequest",
         "ReleaseCoreLeaseResponse",
-        "InstallServiceRequest",
-        "InstallServiceResponse",
-        "UninstallServiceRequest",
-        "UninstallServiceResponse",
-        "RepairServiceRequest",
-        "RepairServiceResponse",
-        "ManagedResource",
-        "CleanupLeaseSession",
-        "CleanupLease",
-        "ExportCleanupLeaseRequest",
-        "ExportCleanupLeaseResponse",
-        "HandoffSessionRequest",
-        "HandoffSessionResponse",
-        "FinalizeHandoffRequest",
-        "FinalizeHandoffResponse"
+        "ManagedResource"
       ],
       "ops": [
         {
@@ -575,48 +561,6 @@
           "request": "ReleaseCoreLeaseRequest",
           "requires_session": false,
           "response": "ReleaseCoreLeaseResponse"
-        },
-        {
-          "code": 13,
-          "name": "InstallService",
-          "request": "InstallServiceRequest",
-          "requires_session": false,
-          "response": "InstallServiceResponse"
-        },
-        {
-          "code": 14,
-          "name": "UninstallService",
-          "request": "UninstallServiceRequest",
-          "requires_session": false,
-          "response": "UninstallServiceResponse"
-        },
-        {
-          "code": 15,
-          "name": "ExportCleanupLease",
-          "request": "ExportCleanupLeaseRequest",
-          "requires_session": false,
-          "response": "ExportCleanupLeaseResponse"
-        },
-        {
-          "code": 16,
-          "name": "HandoffSession",
-          "request": "HandoffSessionRequest",
-          "requires_session": false,
-          "response": "HandoffSessionResponse"
-        },
-        {
-          "code": 17,
-          "name": "FinalizeHandoff",
-          "request": "FinalizeHandoffRequest",
-          "requires_session": false,
-          "response": "FinalizeHandoffResponse"
-        },
-        {
-          "code": 18,
-          "name": "RepairService",
-          "request": "RepairServiceRequest",
-          "requires_session": false,
-          "response": "RepairServiceResponse"
         }
       ],
       "security": {
@@ -1145,6 +1089,26 @@
         {
           "code": "vpn_start_failed",
           "key": "vpnStartFailed"
+        },
+        {
+          "code": "elevation_denied",
+          "key": "elevationDenied"
+        },
+        {
+          "code": "launch_failed",
+          "key": "launchFailed"
+        },
+        {
+          "code": "helper_not_found",
+          "key": "helperNotFound"
+        },
+        {
+          "code": "needs_elevation",
+          "key": "needsElevation"
+        },
+        {
+          "code": "vpn_disconnect_timeout",
+          "key": "vpnDisconnectTimeout"
         }
       ],
       "event_types": [

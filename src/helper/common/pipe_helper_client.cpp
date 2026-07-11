@@ -319,6 +319,21 @@ HelperResponse PipeHelperClient::send_request(HelperOp op,
         resp.error_message = std::string("Failed to parse helper response: ") + e.what();
     }
 
+    // Guard against a well-formed envelope that reports success but carries an
+    // empty payload_json. Each protocol method does an unguarded
+    // json::parse(resp.payload_json) on its success branch; an empty payload
+    // there throws nlohmann::parse_error.101 which propagates as an opaque
+    // "parse_error" to the UI (seen during service install: the envelope
+    // arrived but the payload was lost to a truncated/partial response frame).
+    // Convert this into a controlled failure so callers get a clear code
+    // instead of a raw exception.
+    if (resp.success && resp.payload_json.empty()) {
+        resp.success = false;
+        resp.error_code = "helper_response_empty";
+        resp.error_message =
+            "Helper acknowledged the request but returned an empty response payload";
+    }
+
     return resp;
 }
 
@@ -481,80 +496,4 @@ ReleaseCoreLeaseResponse PipeHelperClient::release_core_lease(
     }
     return release_core_lease_response_from_json(json::parse(resp.payload_json));
 }
-
-InstallServiceResponse PipeHelperClient::install_service(
-    const InstallServiceRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::InstallService, payload);
-    if (!resp.success) {
-        InstallServiceResponse result;
-        result.success = false;
-        result.exit_code = 1;
-        result.message = resp.error_message;
-        return result;
-    }
-    return install_service_response_from_json(json::parse(resp.payload_json));
-}
-
-UninstallServiceResponse PipeHelperClient::uninstall_service(
-    const UninstallServiceRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::UninstallService, payload);
-    if (!resp.success) {
-        UninstallServiceResponse result;
-        result.success = false;
-        result.exit_code = 1;
-        result.message = resp.error_message;
-        return result;
-    }
-    return uninstall_service_response_from_json(json::parse(resp.payload_json));
-}
-
-RepairServiceResponse PipeHelperClient::repair_service(
-    const RepairServiceRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::RepairService, payload);
-    if (!resp.success) {
-        RepairServiceResponse result;
-        result.success = false;
-        result.exit_code = 1;
-        result.message = resp.error_message;
-        return result;
-    }
-    return repair_service_response_from_json(json::parse(resp.payload_json));
-}
-
-ExportCleanupLeaseResponse PipeHelperClient::export_cleanup_lease(
-    const ExportCleanupLeaseRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::ExportCleanupLease, payload);
-    if (!resp.success) {
-        return ExportCleanupLeaseResponse{};
-    }
-    return export_cleanup_lease_response_from_json(json::parse(resp.payload_json));
-}
-
-HandoffSessionResponse PipeHelperClient::handoff_session(
-    const HandoffSessionRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::HandoffSession, payload);
-    if (!resp.success) {
-        HandoffSessionResponse result;
-        result.adopted = false;
-        result.message = resp.error_message;
-        return result;
-    }
-    return handoff_session_response_from_json(json::parse(resp.payload_json));
-}
-
-FinalizeHandoffResponse PipeHelperClient::finalize_handoff(
-    const FinalizeHandoffRequest& req) {
-    json payload = req;
-    auto resp = send_request(HelperOp::FinalizeHandoff, payload);
-    if (!resp.success) {
-        return FinalizeHandoffResponse{};
-    }
-    return finalize_handoff_response_from_json(json::parse(resp.payload_json));
-}
-
 } // namespace exv::helper

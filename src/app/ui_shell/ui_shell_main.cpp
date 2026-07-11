@@ -1,8 +1,10 @@
 #include "app/ui_shell/core_process_manager.hpp"
+#include "app/ui_shell/core_gateway.hpp"
 #include "app/ui_shell/core_rpc_client.hpp"
 #include "app/ui_shell/renderer_assets.hpp"
 #include "app/ui_shell/ui_shell_options.hpp"
 #include "app/ui_shell/ui_shell_runtime.hpp"
+#include "app/ui_shell/ui_shell_single_instance.hpp"
 #include "app/ui_shell/ui_window.hpp"
 #include "runtime/runtime_context.hpp"
 
@@ -85,8 +87,21 @@ int main(int argc, char **argv) {
       options.exv_path,
       options.enable_dev_tools,
   };
+  config.start_hidden = options.start_hidden;
   exv::runtime::bootstrap(options.state_dir);
   config.state_dir = exv::runtime::paths().state_dir;
+
+  auto single_instance =
+      exv::ui_shell::acquire_ui_shell_single_instance(config.state_dir);
+  if (single_instance && !single_instance->is_primary()) {
+    return 0;
+  }
+  if (single_instance) {
+    config.poll_wake_requests =
+        [instance = single_instance.get()](const std::function<void()> &on_wake) {
+          instance->poll_wake_requests(on_wake);
+        };
+  }
 
   exv::ui_shell::configure_core_process_transport_signal_policy();
   exv::ui_shell::CoreProcessLaunch core_launch{
@@ -94,8 +109,7 @@ int main(int argc, char **argv) {
       config.state_dir,
       exv::runtime::paths().home,
       true};
-  auto transport = exv::ui_shell::create_core_process_transport(core_launch);
-  exv::ui_shell::CoreRpcClient client(*transport);
+  exv::ui_shell::CoreGateway gateway(core_launch);
 
 #if defined(_WIN32)
   auto window = exv::platform::win32::ui_shell::create_webview2_window();
@@ -110,5 +124,5 @@ int main(int argc, char **argv) {
     std::cerr << "exv-ui: failed to create platform WebView window\n";
     return 70;
   }
-  return exv::ui_shell::run_ui_shell_window(*window, config, client);
+  return exv::ui_shell::run_ui_shell_window(*window, config, gateway);
 }

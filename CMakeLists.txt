@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(exv VERSION 3.3.2 LANGUAGES CXX)
+project(exv VERSION 3.3.3 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -155,6 +155,7 @@ set(EXV_CORE_SOURCES
     src/core/rpc/core_api_setup.cpp
     src/core/use_cases/config_use_cases.cpp
     src/core/use_cases/system_status_use_cases.cpp
+    src/core/use_cases/tunnel_use_cases.cpp
     src/core/crypto/crypto.cpp
     src/helper/common/helper_connector.cpp
     src/helper/common/pipe_helper_client.cpp
@@ -207,8 +208,9 @@ set(EXV_CORE_SOURCES
 set(EXV_HELPER_RUNTIME_SOURCES
     src/helper/helper.cpp
     src/helper/helper_daemon_context.cpp
+    src/helper/helper_lane_scheduler.cpp
     src/helper/helper_network_ops.cpp
-    src/helper/helper_service_ops.cpp
+    src/helper/helper_install_cli.cpp
     src/helper/common/helper_messages.cpp
     src/helper/runtime/helper_request_dispatcher.cpp
     src/helper/runtime/session_lease_manager.cpp
@@ -276,6 +278,7 @@ if(APPLE)
         src/platform/darwin/helper_lifecycle.cpp
         src/platform/darwin/helper_platform.cpp
         src/platform/darwin/helper_service_manager.cpp
+        src/platform/darwin/helper_single_instance.cpp
         src/platform/darwin/native_tls_stream.cpp
         src/platform/darwin/native_packet_device.cpp
         src/platform/darwin/default_engine_deps.cpp
@@ -289,6 +292,7 @@ if(APPLE)
         src/platform/darwin/service_status.cpp
         src/platform/darwin/darwin_keychain_store.cpp
         src/platform/common/driver_status_stub.cpp
+        src/platform/common/elevated_service_launcher.cpp
     )
     list(APPEND EXV_CLI_FRONTEND_SOURCES
         src/platform/darwin/crypto_backend.cpp
@@ -307,6 +311,7 @@ elseif(UNIX AND NOT APPLE)
         src/platform/linux/helper_lifecycle.cpp
         src/platform/linux/helper_platform.cpp
         src/platform/linux/helper_service_manager.cpp
+        src/platform/linux/helper_single_instance.cpp
         src/platform/linux/oneshot_bootstrap.cpp
         src/platform/linux/platform_network_ops_linux.cpp
         src/platform/linux/process_control.cpp
@@ -315,6 +320,7 @@ elseif(UNIX AND NOT APPLE)
         src/platform/linux/default_engine_deps.cpp
         src/platform/common/service_status_linux.cpp
         src/platform/common/driver_status_stub.cpp
+        src/platform/common/elevated_service_launcher.cpp
     )
     list(APPEND EXV_CLI_FRONTEND_SOURCES
         src/platform/linux/crypto_backend.cpp
@@ -335,6 +341,7 @@ elseif(WIN32)
         src/platform/win32/helper_lifecycle.cpp
         src/platform/win32/helper_platform.cpp
         src/platform/win32/helper_service_manager.cpp
+        src/platform/win32/helper_single_instance.cpp
         src/platform/win32/native_tls_stream.cpp
         src/platform/win32/native_packet_device.cpp
         src/platform/win32/default_engine_deps.cpp
@@ -350,6 +357,7 @@ elseif(WIN32)
         src/platform/win32/win_route_ops.cpp
         src/platform/win32/win_credential_store.cpp
         src/platform/win32/windows_strings.cpp
+        src/platform/common/elevated_service_launcher.cpp
     )
     list(APPEND EXV_CLI_FRONTEND_SOURCES
         src/platform/win32/crypto_backend.cpp
@@ -765,6 +773,59 @@ target_link_libraries(native_helper_session_test PRIVATE exv-helper-runtime Thre
 
 add_test(NAME native_helper_session_test COMMAND native_helper_session_test)
 
+add_executable(helper_service_cli_test
+    tests/helper_service_cli_test.cpp
+    src/helper/helper_install_cli.cpp)
+target_include_directories(helper_service_cli_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(helper_service_cli_test PRIVATE cxx_std_20)
+target_link_libraries(helper_service_cli_test PRIVATE Threads::Threads)
+add_test(NAME helper_service_cli_test COMMAND helper_service_cli_test)
+
+add_executable(helper_exit_reason_test
+    tests/helper_exit_reason_test.cpp)
+target_include_directories(helper_exit_reason_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(helper_exit_reason_test PRIVATE cxx_std_20)
+add_test(NAME helper_exit_reason_test COMMAND helper_exit_reason_test)
+
+add_executable(helper_single_instance_test
+    tests/helper_single_instance_test.cpp)
+target_include_directories(helper_single_instance_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(helper_single_instance_test PRIVATE cxx_std_20)
+target_link_libraries(helper_single_instance_test PRIVATE Threads::Threads)
+target_sources(helper_single_instance_test PRIVATE
+    $<$<PLATFORM_ID:Windows>:src/platform/win32/helper_single_instance.cpp>
+    $<$<PLATFORM_ID:Darwin>:src/platform/darwin/helper_single_instance.cpp>
+    $<$<PLATFORM_ID:Linux>:src/platform/linux/helper_single_instance.cpp>)
+add_test(NAME helper_single_instance_test COMMAND helper_single_instance_test)
+
+add_executable(helper_lane_scheduler_test
+    tests/helper_lane_scheduler_test.cpp
+    src/helper/helper_lane_scheduler.cpp
+    src/helper/common/helper_messages.cpp
+    ${EXV_OBSERVABILITY_SOURCES})
+target_include_directories(helper_lane_scheduler_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(helper_lane_scheduler_test PRIVATE cxx_std_20)
+target_link_libraries(helper_lane_scheduler_test PRIVATE Threads::Threads)
+add_test(NAME helper_lane_scheduler_test COMMAND helper_lane_scheduler_test)
+
+add_executable(elevated_service_launcher_test
+    tests/elevated_service_launcher_test.cpp
+    src/platform/common/elevated_service_launcher.cpp)
+target_include_directories(elevated_service_launcher_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src)
+target_compile_features(elevated_service_launcher_test PRIVATE cxx_std_20)
+target_link_libraries(elevated_service_launcher_test PRIVATE Threads::Threads)
+add_test(NAME elevated_service_launcher_test COMMAND elevated_service_launcher_test)
+
 add_executable(native_engine_contract_test
     tests/native_engine_contract_test.cpp
     src/vpn_engine/native_engine.cpp
@@ -1038,6 +1099,7 @@ add_test(NAME ui_shell_contract_test COMMAND ui_shell_contract_test)
 
 add_executable(ui_shell_core_rpc_client_test
     tests/ui_shell_core_rpc_client_test.cpp
+    src/app/ui_shell/core_gateway.cpp
     src/app/ui_shell/core_rpc_client.cpp
     src/app/ui_shell/core_process_manager.cpp
     src/platform/common/core_resolver_platform_deps.cpp
@@ -1054,6 +1116,7 @@ add_test(NAME ui_shell_core_rpc_client_test COMMAND ui_shell_core_rpc_client_tes
 
 add_executable(ui_shell_runtime_test
     tests/ui_shell_runtime_test.cpp
+    src/app/ui_shell/core_gateway.cpp
     src/app/ui_shell/core_rpc_client.cpp
     src/app/ui_shell/async_host_bridge.cpp
     src/app/ui_shell/host_bridge.cpp
@@ -1114,6 +1177,7 @@ if(WIN32)
         tests/win32_webview2_runtime_test.cpp
         src/app/ui_shell/host_bridge.cpp
         src/platform/win32/ui_shell/webview2_host_win32.cpp
+        src/platform/win32/ui_shell/ui_shell_single_instance_win32.cpp
         src/platform/win32/ui_shell/webview2_runtime_win32.cpp
     )
 
@@ -1136,6 +1200,7 @@ if(APPLE)
         src/app/ui_shell/close_preference.cpp
         src/app/ui_shell/host_bridge.cpp
         src/platform/darwin/ui_shell/wk_webview_host_darwin.mm
+        src/platform/darwin/ui_shell/ui_shell_single_instance_darwin.mm
     )
 
     target_include_directories(darwin_wkwebview_runtime_test PRIVATE
@@ -1164,6 +1229,7 @@ if(UNIX AND NOT APPLE)
         tests/linux_webkitgtk_runtime_test.cpp
         src/app/ui_shell/host_bridge.cpp
         src/platform/linux/ui_shell/webkitgtk_host_linux.cpp
+        src/platform/linux/ui_shell/ui_shell_single_instance_linux.cpp
     )
 
     target_include_directories(linux_webkitgtk_runtime_test PRIVATE
@@ -1199,6 +1265,7 @@ set(EXV_UI_COMMON_SOURCES
     src/app/ui_shell/close_preference.cpp
     src/app/ui_shell/host_bridge.cpp
     src/app/ui_shell/async_host_bridge.cpp
+    src/app/ui_shell/core_gateway.cpp
     src/app/ui_shell/core_rpc_client.cpp
     src/app/ui_shell/core_process_manager.cpp
     src/app/ui_shell/ui_shell_runtime.cpp
@@ -1269,14 +1336,17 @@ if(WIN32)
         src/platform/win32/ui_shell/exv_ui_win32.rc
         src/platform/win32/ui_shell/webview2_host_win32.cpp
         src/platform/win32/ui_shell/webview2_runtime_win32.cpp
+        src/platform/win32/ui_shell/ui_shell_single_instance_win32.cpp
     )
 elseif(APPLE)
     list(APPEND EXV_UI_PLATFORM_SOURCES
         src/platform/darwin/ui_shell/wk_webview_host_darwin.mm
+        src/platform/darwin/ui_shell/ui_shell_single_instance_darwin.mm
     )
 elseif(UNIX)
     list(APPEND EXV_UI_PLATFORM_SOURCES
         src/platform/linux/ui_shell/webkitgtk_host_linux.cpp
+        src/platform/linux/ui_shell/ui_shell_single_instance_linux.cpp
     )
 endif()
 
@@ -1905,6 +1975,7 @@ target_link_libraries(core_process_lifecycle_test PRIVATE exv-core exv-helper-ru
 
 target_compile_definitions(core_process_lifecycle_test PRIVATE
     EXV_VERSION="${PROJECT_VERSION}"
+    EXV_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
 )
 
 add_test(NAME core_process_lifecycle_test COMMAND core_process_lifecycle_test)
@@ -2357,6 +2428,25 @@ target_link_libraries(service_actions_test PRIVATE exv-core exv-helper-runtime)
 
 add_test(NAME service_actions_test COMMAND service_actions_test)
 
+# SystemStatusUseCases service install/uninstall/repair: validates that after
+# task A3b these methods route through launch_elevated_service_op (runas) rather
+# than the helper daemon. Drives the runas seam to assert error mapping and
+# subcommand dispatch; the not-installed success path exercises the real
+# current_service_status() poll. Target name deliberately avoids "install" so
+# Windows installer-detection (UAC) does not flag the test binary.
+add_executable(system_status_service_ops_test
+    tests/system_status_service_ops_test.cpp
+)
+
+target_include_directories(system_status_service_ops_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(system_status_service_ops_test PRIVATE exv-core exv-helper-runtime)
+
+add_test(NAME system_status_service_ops_test COMMAND system_status_service_ops_test)
+
 add_executable(route_actions_test
     tests/core_api/route_actions_test.cpp
 )
@@ -2797,6 +2887,7 @@ set(_release_blocking_tests
     log_actions_test
     core_hello_actions_test
     service_actions_test
+    system_status_service_ops_test
     route_actions_test
     maintenance_actions_test
     error_contract_test
@@ -2841,7 +2932,13 @@ set_property(TEST ${_release_blocking_tests} APPEND PROPERTY LABELS "release-blo
 # test property.
 if(WIN32 AND NOT MSVC)
     get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
-    foreach(_test IN LISTS _release_blocking_tests)
+    # All test executables link against the MinGW runtime DLLs (libgcc_s_seh,
+    # libstdc++, libwinpthread) which live in MINGW_BIN_DIR. Without that dir on
+    # PATH the loader fails with 0xc0000139 (entrypoint/DLL not found). Apply
+    # the PATH environment to every defined test, not just the release-blocking
+    # subset, so newly added tests are runnable without per-test opt-in.
+    get_directory_property(_all_tests TESTS)
+    foreach(_test IN LISTS _all_tests)
         set_tests_properties(${_test} PROPERTIES
             ENVIRONMENT "PATH=${MINGW_BIN_DIR};$<TARGET_FILE_DIR:exv-core>;$ENV{PATH}"
         )
@@ -2926,6 +3023,7 @@ set_property(TEST
     log_actions_test
     core_hello_actions_test
     service_actions_test
+    system_status_service_ops_test
     route_actions_test
     maintenance_actions_test
     error_contract_test
@@ -3014,6 +3112,7 @@ set_property(TEST
     tunnel_contract_test
     config_module_smoke_test
     service_actions_test
+    system_status_service_ops_test
     route_actions_test
     maintenance_actions_test
     error_contract_test

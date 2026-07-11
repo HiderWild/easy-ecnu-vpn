@@ -1,7 +1,8 @@
 <script setup lang="ts">
 import { computed, nextTick, ref, watch } from 'vue'
-import { Eye, KeyRound } from 'lucide-vue-next'
+import { KeyRound } from 'lucide-vue-next'
 import ModalShell from './ModalShell.vue'
+import PasswordField from './PasswordField.vue'
 import { useConfigStore } from '../stores/config'
 import { useUiStore } from '../stores/ui'
 
@@ -16,9 +17,8 @@ const username = ref('')
 const password = ref('')
 const rememberPassword = ref(true)
 const error = ref('')
-const revealing = ref(false)
 const usernameRef = ref<HTMLInputElement | null>(null)
-const passwordRef = ref<HTMLInputElement | null>(null)
+const passwordRef = ref<InstanceType<typeof PasswordField> | null>(null)
 
 const credentialPromptTitle = computed(() => {
   const request = ui.credentialPrompt
@@ -31,6 +31,9 @@ const credentialPromptTitle = computed(() => {
 const credentialPromptNeedsFullWindow = computed(() =>
   props.compact && Boolean(ui.credentialPrompt?.missingUsername),
 )
+const showSavedPasswordOverwriteHint = computed(() =>
+  Boolean(ui.credentialPrompt?.missingPassword && config.authConfig.password_stored),
+)
 
 watch(
   () => ui.showCredentialPrompt,
@@ -39,14 +42,12 @@ watch(
       username.value = ''
       password.value = ''
       error.value = ''
-      revealing.value = false
       return
     }
     username.value = ui.credentialPrompt.username
     password.value = ''
     rememberPassword.value = ui.credentialPrompt.rememberPassword
     error.value = ''
-    revealing.value = false
     await nextTick()
     if (ui.credentialPrompt.missingUsername) {
       usernameRef.value?.focus()
@@ -121,31 +122,16 @@ function enterFullCredentialPrompt() {
 
       <label v-if="ui.credentialPrompt?.missingPassword" class="block">
         <span class="mb-1 block text-xs font-medium text-muted">密码</span>
-        <span class="relative block">
-          <input
-            ref="passwordRef"
-            v-model="password"
-            :type="revealing ? 'text' : 'password'"
-            autocomplete="current-password"
-            class="w-full rounded-lg border border-border bg-bg px-3 py-2 pr-11 text-sm text-foreground outline-none focus:border-primary"
-            @input="error = ''"
-            @keydown.esc.prevent="cancel"
-          />
-          <button
-            v-if="!props.compact"
-            type="button"
-            class="absolute right-2 top-1/2 grid h-8 w-8 -translate-y-1/2 place-items-center rounded-md text-muted hover:bg-surface/80 hover:text-foreground"
-            title="按住显示密码"
-            aria-label="按住显示密码"
-            @pointerdown.prevent="revealing = true"
-            @pointerup="revealing = false"
-            @pointercancel="revealing = false"
-            @pointerleave="revealing = false"
-            @blur="revealing = false"
-          >
-            <Eye class="h-4 w-4" />
-          </button>
-        </span>
+        <PasswordField
+          ref="passwordRef"
+          v-model="password"
+          autocomplete="current-password"
+          input-class="w-full rounded-lg border border-border bg-bg px-3 py-2 pr-11 text-sm text-foreground outline-none focus:border-primary"
+          :show-reveal-button="!props.compact"
+          :show-saved-password-overwrite-hint="showSavedPasswordOverwriteHint && !props.compact"
+          @input="error = ''"
+          @keydown.esc.prevent="cancel"
+        />
       </label>
 
       <label v-if="ui.credentialPrompt?.missingPassword && !props.compact" class="flex items-center gap-2 text-xs text-muted">

@@ -85,4 +85,15 @@ describe('native error presentation contract', () => {
         `${rawMessage} should map to Chinese dialog copy`)
     }
   })
+
+  it('routes broken core transport failures to the in-app core restart action', () => {
+    assert.match(storeText, /Core RPC transport is closed[\s\S]*recommended_action:\s*'restart_core'/,
+      'closed Core RPC transport should recommend restarting the core')
+    assert.match(storeText, /core_comm_broken[\s\S]*recommended_action:\s*'restart_core'/,
+      'core_comm_broken should recommend restarting the core')
+    assert.match(storeText, /core_unresponsive[\s\S]*recommended_action:\s*'restart_core'/,
+      'core_unresponsive should recommend restarting the core')
+    assert.doesNotMatch(storeText, /recommended_action:\s*'restart_app'/,
+      'broken core transport should not ask users to restart the whole client')
+  })
 })

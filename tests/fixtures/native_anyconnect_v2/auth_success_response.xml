@@ -1,8 +1,0 @@
-<?xml version="1.0" encoding="UTF-8"?>
-<config-auth client="vpn" type="complete">
-  <auth id="success">
-    <message>Login successful.</message>
-  </auth>
-  <session-token>V2_SESSION_TOKEN</session-token>
-  <opaque>OPAQUE_ONE</opaque>
-</config-auth>

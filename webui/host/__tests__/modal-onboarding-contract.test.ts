@@ -28,6 +28,18 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(useSse, /ui\.openQuickStart/)
   })
 
+  it('keeps quick start out of minimal mode and falls back to credential completion', () => {
+    const useSse = readSource('src', 'composables', 'useSSE.ts')
+    const quickStartDialog = readSource('src', 'components', 'QuickStartDialog.vue')
+
+    assert.match(useSse, /config\.settings\.minimal_mode/)
+    assert.match(useSse, /requestCredentials\(/)
+    assert.match(useSse, /missingUsername/)
+    assert.match(useSse, /missingPassword/)
+    assert.match(useSse, /return\s+ui\.openQuickStart/)
+    assert.doesNotMatch(quickStartDialog, /saveSettings\(\{\s*minimal_mode:\s*false\s*\}\)/)
+  })
+
   it('exposes a typed credential prompt instead of password-only connect resolution', () => {
     const uiStore = readSource('src', 'stores', 'ui.ts')
     const vpnStore = readSource('src', 'stores', 'vpn.ts')
@@ -144,6 +156,7 @@ describe('modal onboarding and credential contracts', () => {
     const modalShell = readSource('src', 'components', 'ModalShell.vue')
     const globalStack = readSource('src', 'windows', 'GlobalWindowStack.vue')
     const quickStart = readSource('src', 'components', 'QuickStartDialog.vue')
+    const useSse = readSource('src', 'composables', 'useSSE.ts')
     const passwordPrompt = readSource('src', 'components', 'PasswordPromptDialog.vue')
     const credentialPrompt = readSource('src', 'components', 'CredentialPromptDialog.vue')
 
@@ -159,8 +172,9 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(globalStack, /<p v-if="compactModals" class="modal-compact-message">/)
     assert.match(globalStack, /<template v-else>\s*<fieldset/)
 
-    assert.match(quickStart, /config\.settings\.minimal_mode/)
-    assert.match(quickStart, /config\.saveSettings\(\{\s*minimal_mode:\s*false\s*\}\)/)
+    assert.match(useSse, /config\.settings\.minimal_mode/)
+    assert.match(useSse, /requestCredentials\(/)
+    assert.doesNotMatch(quickStart, /config\.saveSettings\(\{\s*minimal_mode:\s*false\s*\}\)/)
     assert.doesNotMatch(quickStart, /quick-start-dialog__compact/)
     assert.doesNotMatch(quickStart, /compact\?:\s*boolean/)
 
@@ -282,7 +296,7 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(resetScript, /\[CmdletBinding\(SupportsShouldProcess/)
     assert.match(resetScript, /\[switch\]\$Force/)
     assert.match(resetScript, /\$env:LOCALAPPDATA/)
-    assert.match(resetScript, /profile\\default/)
+    assert.match(resetScript, /\$profileDir = Join-Path \$profileRoot 'default'/)
     assert.match(resetScript, /config\.json/)
     assert.match(resetScript, /\.key/)
     assert.match(resetScript, /close-preference\.json/)
@@ -294,6 +308,11 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(resetScript, /connect-attempt\.lock/)
     assert.match(resetScript, /connect-attempt\.mutex/)
     assert.match(resetScript, /profile\.redirect/)
+    assert.match(resetScript, /function Get-UserProfileRoot/)
+    assert.match(resetScript, /HOMEDRIVE/)
+    assert.match(resetScript, /HOMEPATH/)
+    assert.match(resetScript, /function Assert-ConfigDirSafeForCleanup/)
+    assert.match(resetScript, /function Add-ConfigCleanupTargets/)
     assert.match(resetScript, /function Stop-ExvUserProcesses/)
     assert.match(resetScript, /Stop-Process -Name exv-ui/)
     assert.match(resetScript, /Stop-Process -Name exv /)
@@ -304,6 +323,7 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(resetScript, /exv-ui\.exe\.WebView2/)
     assert.match(resetScript, /Local Storage/)
     assert.match(resetScript, /function Remove-ConfigTree/)
+    assert.match(resetScript, /function Remove-EmptyDirectoryIfExists/)
     assert.match(resetScript, /Assert-PathUnderRoot/)
     assert.match(resetScript, /Remove-Item -LiteralPath/)
     assert.doesNotMatch(resetScript, /Remove-Item -LiteralPath \$installDir/)
@@ -404,6 +424,15 @@ describe('modal onboarding and credential contracts', () => {
     assert.match(settings, /settings-save-popover/)
     assert.match(settings, /z-\[80\]/)
     assert.doesNotMatch(settings, /justify-between/)
+  })
+
+  it('offers an in-app core restart and retry when settings save loses the core', () => {
+    const settings = readSource('src', 'pages', 'SettingsPage.vue')
+
+    assert.match(settings, /recommended_action === 'restart_core'/)
+    assert.match(settings, /primaryLabel:\s*'重启内核并重试'/)
+    assert.match(settings, /window\.exv\?\.core\.restart\?\.\(\)/)
+    assert.match(settings, /await saveDirtyChanges\(\)/)
   })
 
   it('supports frontend-only light dark and system themes outside quick start', () => {
@@ -545,7 +574,9 @@ describe('modal onboarding and credential contracts', () => {
       assert.match(source, /status:\s*\(\) => rpc\('cli\.status'\)/)
       assert.match(source, /install:\s*\(\) => rpc\('cli\.install'\)/)
       assert.match(source, /uninstall:\s*\(\) => rpc\('cli\.uninstall'\)/)
+      assert.match(source, /restart:\s*\(\) => rpc\('core\.restart'\)/)
       assert.doesNotMatch(source, /unsupported\('cli\.install'\)/)
+      assert.doesNotMatch(source, /unsupported\('core\.restart'\)/)
     }
     assert.match(systemActions, /"cli\.status"/)
     assert.match(systemActions, /"cli\.install"/)

@@ -1,5 +1,0 @@
-HTTP/1.1 401 Unauthorized
-Content-Type: application/json; charset=utf-8
-Cache-Control: no-store
-
-{"error":"auth_failed","message":"invalid username or password"}

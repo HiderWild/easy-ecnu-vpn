@@ -1,8 +1,0 @@
-HTTP/1.1 200 OK
-X-CSTP-Address: 10.255.0.10
-X-CSTP-Netmask: 255.255.255.0
-X-CSTP-MTU: 1400
-X-CSTP-Split-Include: 198.51.100.0/24
-X-CSTP-Split-Include: 203.0.113.0/24
-X-CSTP-Bypass-Route: 192.0.2.0/24
-

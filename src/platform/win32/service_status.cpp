@@ -111,5 +111,30 @@ ServiceStatusSnapshot current_service_status() {
   return status;
 }
 
+bool try_start_helper_service() {
+  const auto &config = helper_platform_config();
+  SC_HANDLE scm = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
+  if (!scm) {
+    return false;
+  }
+  SC_HANDLE svc = OpenServiceA(scm, config.service_name,
+                               SERVICE_QUERY_STATUS | SERVICE_START);
+  if (!svc) {
+    CloseServiceHandle(scm);
+    return false;
+  }
+  bool accepted = false;
+  if (StartService(svc, 0, NULL)) {
+    accepted = true;
+  } else {
+    DWORD err = GetLastError();
+    // Already running counts as success for the caller's availability probe.
+    accepted = (err == ERROR_SERVICE_ALREADY_RUNNING);
+  }
+  CloseServiceHandle(svc);
+  CloseServiceHandle(scm);
+  return accepted;
+}
+
 } // namespace platform
 } // namespace exv

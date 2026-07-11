@@ -44,6 +44,11 @@ int current_process_id();
 std::string registry_path(const std::string &config_dir);
 nlohmann::json to_json(const AttemptRecord &record);
 
+// RAII guard for a connection attempt. Acquired when a connect job starts;
+// on destruction (job exit, including failure/exception) it marks the attempt
+// terminal and releases the in-flight guard, so a subsequent connect/reconnect
+// is never blocked by a dead prior attempt. Stale-owner recovery in
+// try_acquire() provides a second safety net if the scope was bypassed.
 class TerminalAttemptScope {
 public:
   TerminalAttemptScope(std::string config_dir, std::string attempt_id,

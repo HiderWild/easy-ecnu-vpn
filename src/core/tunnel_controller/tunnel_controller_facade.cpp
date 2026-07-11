@@ -83,17 +83,6 @@ void TunnelController::set_auto_reconnect(bool enabled) {
     impl_->notify_status();
 }
 
-bool TunnelController::replace_helper_for_handoff(
-    std::shared_ptr<exv::helper::HelperClient> helper,
-    std::shared_ptr<exv::platform::PlatformNetworkOps> net_ops,
-    std::string core_lease_id,
-    std::string helper_mode,
-    std::string helper_endpoint) {
-    return impl_->replace_helper_for_handoff(
-        std::move(helper), std::move(net_ops), std::move(core_lease_id),
-        std::move(helper_mode), std::move(helper_endpoint));
-}
-
 std::shared_ptr<exv::helper::HelperClient>
 TunnelController::helper_client_for_maintenance() const {
     return impl_->helper_;

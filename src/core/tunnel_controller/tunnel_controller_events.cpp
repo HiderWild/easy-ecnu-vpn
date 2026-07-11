@@ -213,7 +213,9 @@ void TunnelController::Impl::on_helper_lost() {
             "helper_lost", "Helper process disconnected unexpectedly");
 
         if (intent_.auto_reconnect) {
-            // Attempt to re-establish the helper connection.
+            // Reuse the existing helper (the privilege "spark"): reconnect to
+            // the same endpoint rather than re-running runas / starting a new
+            // one-shot helper. Only if the reconnect fails do we surface Failed.
             try {
                 if (helper_ && helper_->connect()) {
                     attempt_reconnect(err);

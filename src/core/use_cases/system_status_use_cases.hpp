@@ -10,10 +10,6 @@
 
 namespace exv::core {
 
-UseCaseResult finalize_service_uninstall_result(
-    const exv::helper::UninstallServiceResponse &response,
-    nlohmann::json service_status);
-
 class SystemStatusUseCases {
 public:
   SystemStatusUseCases();

@@ -7,6 +7,7 @@
 
 #include "platform/common/helper_lifecycle.hpp"
 #include "platform/common/helper_platform.hpp"
+#include "platform/common/service_status.hpp"
 #include "cli/console.hpp"
 
 #include <sys/stat.h>
@@ -166,6 +167,12 @@ int install_helper_service(const std::string &executable_path,
   plist << "    <key>SuccessfulExit</key>\n";
   plist << "    <false/>\n";
   plist << "  </dict>\n";
+  plist << "  <key>StandardOutPath</key>\n";
+  plist << "  <string>/var/log/exv-helper.log</string>\n";
+  plist << "  <key>StandardErrorPath</key>\n";
+  plist << "  <string>/var/log/exv-helper.log</string>\n";
+  plist << "  <key>ThrottleInterval</key>\n";
+  plist << "  <integer>10</integer>\n";
   plist << "</dict>\n";
   plist << "</plist>\n";
 
@@ -222,6 +229,22 @@ int uninstall_helper_service(const HelperServiceManagerContext &context) {
     std::remove(platform_config.endpoint);
   if (context.clear_session_state)
     context.clear_session_state();
+
+  // Full artifact cleanup: remove the stable helper binary, the one-shot
+  // socket endpoint, and kill any orphaned one-shot helpers (best-effort) so
+  // the "not installed" state is trustworthy for the next backend resolution.
+  if (*platform_config.default_service_binary_path)
+    std::remove(platform_config.default_service_binary_path);
+  platform::run_command(
+      "rm -f /tmp/exv-*-oneshot.sock >/dev/null 2>&1");
+  platform::run_command(
+      "pkill -f 'exv-helper.*--oneshot' >/dev/null 2>&1");
+
+  const ServiceStatusSnapshot after = current_service_status();
+  if (after.installed) {
+    cli::print_error("Uninstall completed but the service is still installed.");
+    return 1;
+  }
 
   cli::print_success("EXV helper service uninstalled.");
   return 0;

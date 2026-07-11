@@ -1,7 +1,7 @@
 #pragma once
 #include "helper/common/helper_messages.hpp"
+#include "helper/helper_exit_reason.hpp"
 #include "helper/helper_network_ops.hpp"
-#include "helper/helper_service_ops.hpp"
 #include "helper/runtime/helper_request_dispatcher.hpp"
 #include "helper/runtime/session_lease_manager.hpp"
 #include "helper/runtime/cleanup_registry.hpp"
@@ -31,9 +31,6 @@ public:
     explicit HelperHandler(HelperLifecyclePolicy policy = HelperLifecyclePolicy());
     HelperHandler(HelperLifecyclePolicy policy,
                   std::shared_ptr<HelperNetworkOps> network_ops);
-    HelperHandler(HelperLifecyclePolicy policy,
-                  std::shared_ptr<HelperNetworkOps> network_ops,
-                  std::shared_ptr<HelperServiceOps> service_ops);
 
     HelperResponse handle(const HelperRequest& request);
     HelperResponse handle(const HelperRequest& request,
@@ -51,6 +48,15 @@ public:
     void set_startup_context(HelperStartupContext context);
     CleanupResponse cleanup_all_sessions(const CleanupPolicy& policy);
     void handle_core_lifecycle_lost();
+
+    // Record that the daemon is winding down for the given reason. While
+    // shutdown_in_progress is set the periodic tick() and core-lease timeout
+    // check are no-ops, so a normal caller-driven exit (Shutdown op / service
+    // stop / request_daemon_stop) does not race with the heartbeat timer and
+    // force a cleanup of sessions the caller is intentionally leaving intact.
+    void mark_shutdown(HelperExitReason reason);
+    HelperExitReason pending_exit_reason() const;
+    bool shutdown_in_progress() const;
 
 private:
     void register_handlers();
@@ -91,12 +97,6 @@ private:
                                      const HelperRequestContext& context);
     HelperResponse handle_release_core_lease(
         const HelperRequest& req, const HelperRequestContext& context);
-    HelperResponse handle_install_service(const HelperRequest& req);
-    HelperResponse handle_uninstall_service(const HelperRequest& req);
-    HelperResponse handle_repair_service(const HelperRequest& req);
-    HelperResponse handle_export_cleanup_lease(const HelperRequest& req);
-    HelperResponse handle_handoff_session(const HelperRequest& req);
-    HelperResponse handle_finalize_handoff(const HelperRequest& req);
 
     HelperRequestDispatcher dispatcher_;
     SessionLeaseManager leases_;
@@ -106,8 +106,9 @@ private:
     CommandValidator validator_;
     HelperStartupContext startup_context_;
     std::shared_ptr<HelperNetworkOps> network_ops_;
-    std::shared_ptr<HelperServiceOps> service_ops_;
     bool shutdown_requested_ = false;
+    bool shutdown_in_progress_ = false;
+    HelperExitReason pending_exit_reason_ = HelperExitReason::Normal;
     mutable std::mutex state_mutex_;
     PrivilegedTaskQueue task_queue_;
 };
