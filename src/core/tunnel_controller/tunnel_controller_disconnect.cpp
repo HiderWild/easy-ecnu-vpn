@@ -8,6 +8,23 @@ namespace exv::core {
 // Disconnect flow
 // ================================================================
 
+void TunnelController::Impl::close_helper_client_after_terminal_disconnect() {
+        if (helper_) {
+            try {
+                helper_->disconnect();
+            } catch (const std::exception& e) {
+                log_tunnel_event("WARN", "helper.client.disconnect.failed",
+                                 "Helper client disconnect failed",
+                                 {{"error", e.what()}});
+            }
+        }
+        helper_connected_seen_ = false;
+        helper_status_override_.clear();
+        helper_endpoint_.clear();
+        helper_mode_ = "unknown";
+        update_snapshot();
+    }
+
 void TunnelController::Impl::do_disconnect(DisconnectReason reason) {
         intent_.desired_connected    = false;
         intent_.user_disconnect_reason = reason;
@@ -62,6 +79,8 @@ void TunnelController::Impl::shutdown_helper_session_for_cleanup() {
 void TunnelController::Impl::cleanup_after_failed_startup() {
         stop_heartbeat();
         shutdown_helper_session_for_cleanup();
+        release_core_lease();
+        close_helper_client_after_terminal_disconnect();
     }
 
 void TunnelController::Impl::do_cleanup() {
@@ -69,19 +88,26 @@ void TunnelController::Impl::do_cleanup() {
         transition_to(TunnelPhase::CleaningUp);
 
         shutdown_helper_session_for_cleanup();
+        const bool release_ok = release_core_lease();
+        close_helper_client_after_terminal_disconnect();
+        if (!release_ok) {
+            log_tunnel_event("WARN", "core_lease.release.incomplete",
+                             "Disconnect completed after best-effort CoreLease release");
+        }
 
         transition_to(TunnelPhase::Idle);
     }
 
-void TunnelController::Impl::release_core_lease() {
+bool TunnelController::Impl::release_core_lease() {
         if (core_lease_id_.empty()) {
             log_tunnel_event("INFO", "core_lease.release.skipped",
                              "No helper core lease to release");
             stop_core_lease_keepalive();
-            return;
+            return true;
         }
 
         const auto lease_id = core_lease_id_;
+        bool released = false;
         try {
             log_tunnel_event("INFO", "core_lease.release.starting",
                              "Releasing helper core lease",
@@ -90,6 +116,7 @@ void TunnelController::Impl::release_core_lease() {
             req.lease_id = lease_id;
             req.exit_if_oneshot = true;
             auto resp = helper_->release_core_lease(req);
+            released = resp.released;
             log_tunnel_event("INFO", "core_lease.release.completed",
                              "Helper core lease release completed",
                              {{"released", resp.released ? "true" : "false"},
@@ -103,6 +130,7 @@ void TunnelController::Impl::release_core_lease() {
         core_lease_id_.clear();
         stop_core_lease_keepalive();
         update_snapshot();
+        return released;
     }
 
 } // namespace exv::core

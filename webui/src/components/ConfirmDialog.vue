@@ -14,7 +14,7 @@ const ui = useUiStore()
 <template>
   <ModalShell
     :open="ui.showConfirm"
-    title="确认操作"
+    :title="ui.confirmTitle"
     :description="ui.confirmMessage"
     :compact="props.compact"
     size="sm"
@@ -30,14 +30,19 @@ const ui = useUiStore()
         class="rounded-lg border border-border px-3 py-2 text-sm text-muted hover:bg-surface/80"
         @click="ui.closeConfirm"
       >
-        取消
+        {{ ui.confirmCancelLabel }}
       </button>
       <button
         type="button"
-        class="rounded-lg bg-destructive px-3 py-2 text-sm text-white hover:bg-destructive/90"
+        :class="[
+          'rounded-lg px-3 py-2 text-sm text-white',
+          ui.confirmVariant === 'destructive'
+            ? 'bg-destructive hover:bg-destructive/90'
+            : 'bg-accent hover:bg-accent/90',
+        ]"
         @click="ui.onConfirm"
       >
-        确认
+        {{ ui.confirmConfirmLabel }}
       </button>
     </template>
   </ModalShell>

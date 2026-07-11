@@ -33,6 +33,8 @@ RequestExecutionLevel user
 !define MUI_UNICON "..\..\assets\icons\icon.ico"
 !define MUI_ABORTWARNING
 !define SERVICE_NAME "exv-helper"
+!define SERVICE_REMOVAL_POLL_MS 200
+!define SERVICE_REMOVAL_MAX_ATTEMPTS 10
 
 Name "${APP_NAME}"
 Caption "${APP_NAME} 安装向导"
@@ -92,10 +94,10 @@ Function WaitForHelperServiceRemoval
     StrCpy $HelperServiceStillInstalled 0
     Goto done
   still_installed:
-    IntCmp $0 20 done wait done
+    IntCmp $0 ${SERVICE_REMOVAL_MAX_ATTEMPTS} done wait done
   wait:
     IntOp $0 $0 + 1
-    Sleep 500
+    Sleep ${SERVICE_REMOVAL_POLL_MS}
     Goto loop
   done:
 FunctionEnd
@@ -249,10 +251,10 @@ Function un.WaitForHelperServiceRemoval
     StrCpy $HelperServiceStillInstalled 0
     Goto done
   still_installed:
-    IntCmp $0 20 done wait done
+    IntCmp $0 ${SERVICE_REMOVAL_MAX_ATTEMPTS} done wait done
   wait:
     IntOp $0 $0 + 1
-    Sleep 500
+    Sleep ${SERVICE_REMOVAL_POLL_MS}
     Goto loop
   done:
 FunctionEnd

@@ -178,12 +178,16 @@ RpcResponse VpnActions::get_legacy_status(const RpcRequest& req) {
                                     snap.phase != exv::core::TunnelPhase::Failed;
         result["auto_reconnect"] = snap.auto_reconnect;
         result["server"] = !snap.server.empty() ? snap.server : cfg.server;
+        result["username"] = cfg.username;
         result["interface"] = snap.interface_name;
         result["internal_ip"] = snap.internal_ip;
+        result["network_ready"] = snap.network_ready;
 
         if (snap.last_error.has_value()) {
             const auto& err = snap.last_error.value();
             result["last_error"] = {
+                {"domain", err.domain},
+                {"code", err.code},
                 {"message", err.message},
                 {"recoverable", err.recoverable},
                 {"recommended_action", err.recommended_action}

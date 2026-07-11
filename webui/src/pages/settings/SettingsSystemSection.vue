@@ -291,7 +291,7 @@ function updateSettingField<K extends keyof SettingsConfig>(key: K, value: Setti
 async function toggleService() {
   systemMessage.value = null
   const installed = vpn.serviceInstalled
-  const ok = installed ? await vpn.disconnectAndUninstallService() : await vpn.installService()
+  const ok = installed ? await vpn.requestUninstallService() : await vpn.requestInstallService()
   if (ok) {
     ui.addToast(installed ? '辅助服务已卸载' : '辅助服务已安装', 'success')
   } else if (vpn.serviceStatus?.operation_state === 'in_progress') {

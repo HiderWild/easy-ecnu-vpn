@@ -144,7 +144,7 @@ async function confirm() {
     }
     ui.closeQuickStart()
     if (shouldInstallService.value && !vpn.serviceInstalled) {
-      const installed = await vpn.installService()
+      const installed = await vpn.requestInstallService({ confirmWhenInactive: false })
       if (!installed) {
         ui.requestError({ title: '服务安装失败', message: '配置已保存，可稍后在设置中重新安装服务。' })
       }

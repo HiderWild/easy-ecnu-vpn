@@ -23,6 +23,7 @@ const minimalModeViewText = readSource('src', 'components', 'MinimalModeView.vue
 const modalShellText = readSource('src', 'components', 'ModalShell.vue')
 const hostApiText = readSource('src', 'api', 'host.ts')
 const navBarText = readSource('src', 'components', 'NavBar.vue')
+const vpnActionsText = readSource('..', 'src', 'core', 'rpc', 'vpn_actions.cpp')
 
 function vueScriptSetup(text: string) {
   const match = text.match(/<script setup[^>]*>([\s\S]*?)<\/script>/)
@@ -299,7 +300,9 @@ describe('frontend-owned UI mode state', () => {
   })
 
   it('keeps minimal-mode prompts inside the shared in-window modal stack', () => {
-    assert.match(uiStoreText, /function requestConfirm\(message: string, onConfirm: \(\) => void\)/)
+    assert.match(uiStoreText, /interface ConfirmOptions/)
+    assert.match(uiStoreText, /function requestConfirm\(message: string, onConfirm: \(\) => void, options: ConfirmOptions = \{\}\)/)
+    assert.match(uiStoreText, /confirmCancelCallback/)
     assert.match(uiStoreText, /function requestPassword\(message: string, options\?:/)
     assert.doesNotMatch(uiStoreText, /window\.exv\.modal\.confirmPrompt/)
     assert.doesNotMatch(uiStoreText, /window\.exv\.modal\.passwordPrompt/)
@@ -325,15 +328,21 @@ describe('connection failure presentation contract', () => {
     assert.ok(statusFields.has('error'))
     assert.ok(statusFields.has('error_code'))
     assert.ok(statusFields.has('error_recoverable'))
+    assert.ok(statusFields.has('last_error'))
     assert.match(vpnStoreText, /function isTerminalConnectStatus\(nextStatus: VpnStatus\)/)
     assert.match(vpnStoreText, /connectInFlight\.value && isTerminalConnectStatus\(nextStatus\)/)
     assert.match(vpnStoreText, /nextStatus\.connected/)
     assert.match(vpnStoreText, /nextStatus\.error_code/)
     assert.match(vpnStoreText, /function isTerminalConnectStatus\(nextStatus: VpnStatus\)\s*\{[\s\S]*nextStatus\.error/)
-    assert.match(vpnStoreText, /nextStatus\.phase === 'failed'/)
+    assert.match(vpnStoreText, /nextStatus\.last_error/)
+    assert.match(vpnStoreText, /String\(nextStatus\.phase \?\? ''\)\.toLowerCase\(\) === 'failed'/)
     assert.doesNotMatch(vpnStoreText, /connectInFlight\.value && \(nextStatus\.connected \|\| nextStatus\.process_running === false\)/)
-    assert.match(vpnStoreText, /\(nextStatus\.error_code \|\| nextStatus\.error\)[\s\S]*setError\(normalizeError/)
+    assert.match(vpnStoreText, /const terminalError = statusErrorForConnect\(nextStatus\)/)
+    assert.match(vpnStoreText, /terminalError\.code !== 'user_cancelled'[\s\S]*setError\(normalizeError/)
+    assert.match(vpnStoreText, /code:\s*terminalError\.code \|\| 'connection_failed'/)
+    assert.match(vpnStoreText, /message:\s*terminalError\.message \|\| '连接失败，请打开日志查看详细原因后重试。'/)
     assert.match(vpnStoreText, /lastFailedConnectMode\.value = 'helper'/)
+    assert.match(vpnActionsText, /get_legacy_status[\s\S]*\{"code", err\.code\}/)
   })
 
   it('keeps backend connection failures visible while suppressing user-cancelled errors', () => {
@@ -436,11 +445,13 @@ describe('desktop log transport contract', () => {
 describe('dashboard virtual network topology contract', () => {
   it('keeps upstream virtual adapter detection on the dashboard while hiding disconnected sidebar details', () => {
     assert.doesNotMatch(dashboardPageText, /network-probe-strip/)
-    assert.match(dashboardPageText, /upstreamVirtualTooltip/)
-    assert.match(dashboardPageText, /tooltip:\s*upstreamVirtualTooltip\.value/)
-    assert.match(dashboardPageText, /:title="node\.tooltip \|\| node\.title"/)
+    assert.match(dashboardPageText, /DashboardVisualStage/)
+    assert.match(dashboardPageText, /networkProbeSummary/)
+    assert.match(dashboardPageText, /routePolicyDescription/)
     assert.match(dashboardPageText, /hasUpstreamVirtual/)
     assert.match(dashboardPageText, /vpn\.status\?\.upstream_virtual_detected/)
+    assert.doesNotMatch(dashboardPageText, /tooltip:\s*upstreamVirtualTooltip\.value/)
+    assert.doesNotMatch(dashboardPageText, /:title="node\.tooltip \|\| node\.title"/)
     assert.match(navBarText, /showSidebarStatusDetails\s*=\s*computed\(\(\) => Boolean\(vpn\.status\?\.connected\)\)/)
   })
 })

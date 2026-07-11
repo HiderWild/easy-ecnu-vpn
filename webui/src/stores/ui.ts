@@ -17,6 +17,14 @@ export interface ErrorModalState {
   onClose: (() => void | Promise<void>) | null
 }
 
+export interface ConfirmOptions {
+  title?: string
+  confirmLabel?: string
+  cancelLabel?: string
+  variant?: 'primary' | 'destructive'
+  onCancel?: () => void
+}
+
 export interface QuickStartRequest {
   reason: 'missing' | 'invalid'
   defaults: {
@@ -43,8 +51,13 @@ export interface CredentialPromptResult {
 export const useUiStore = defineStore('ui', () => {
   const toasts = ref<ToastMessage[]>([])
   const showConfirm = ref(false)
+  const confirmTitle = ref('确认操作')
   const confirmMessage = ref('')
+  const confirmConfirmLabel = ref('确认')
+  const confirmCancelLabel = ref('取消')
+  const confirmVariant = ref<'primary' | 'destructive'>('destructive')
   const confirmCallback = ref<(() => void) | null>(null)
+  const confirmCancelCallback = ref<(() => void) | null>(null)
   const errorModal = ref<ErrorModalState>({
     visible: false,
     title: '',
@@ -81,20 +94,38 @@ export const useUiStore = defineStore('ui', () => {
     toasts.value = toasts.value.filter((t) => t.id !== id)
   }
 
-  function requestConfirm(message: string, onConfirm: () => void) {
+  function requestConfirm(message: string, onConfirm: () => void, options: ConfirmOptions = {}) {
+    confirmTitle.value = options.title || '确认操作'
     confirmMessage.value = message
+    confirmConfirmLabel.value = options.confirmLabel || '确认'
+    confirmCancelLabel.value = options.cancelLabel || '取消'
+    confirmVariant.value = options.variant || 'destructive'
     confirmCallback.value = onConfirm
+    confirmCancelCallback.value = options.onCancel || null
     showConfirm.value = true
   }
 
-  function closeConfirm() {
+  function resetConfirmState() {
     showConfirm.value = false
+    confirmTitle.value = '确认操作'
+    confirmMessage.value = ''
+    confirmConfirmLabel.value = '确认'
+    confirmCancelLabel.value = '取消'
+    confirmVariant.value = 'destructive'
     confirmCallback.value = null
+    confirmCancelCallback.value = null
+  }
+
+  function closeConfirm() {
+    const cancel = confirmCancelCallback.value
+    resetConfirmState()
+    cancel?.()
   }
 
   function onConfirm() {
-    confirmCallback.value?.()
-    closeConfirm()
+    const callback = confirmCallback.value
+    resetConfirmState()
+    callback?.()
   }
 
   function requestError(options: {
@@ -206,7 +237,8 @@ export const useUiStore = defineStore('ui', () => {
   }
 
   return {
-    toasts, showConfirm, confirmMessage, confirmCallback,
+    toasts, showConfirm, confirmTitle, confirmMessage,
+    confirmConfirmLabel, confirmCancelLabel, confirmVariant, confirmCallback,
     errorModal,
     showPasswordPrompt, passwordPromptMessage, passwordPromptDescription,
     passwordPromptSubmitLabel, passwordPromptCancelLabel,

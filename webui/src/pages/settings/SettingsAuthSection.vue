@@ -30,11 +30,7 @@ const authForm = computed(() => props.authDraft ?? fallbackAuthDraft)
 
 const rememberPasswordDisabled = computed(() => !authForm.value.username.trim())
 
-const passwordPlaceholder = computed(() =>
-  authForm.value.password_stored
-    ? '留空表示保留原密码，输入新密码覆盖'
-    : '请输入密码',
-)
+const passwordPlaceholder = '请输入密码'
 const showSavedPasswordOverwriteHint = computed(() => Boolean(authForm.value.password_stored))
 
 function normalizeServerChoice(server: string) {

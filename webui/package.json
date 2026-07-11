@@ -1,7 +1,7 @@
 {
   "name": "webui",
   "private": true,
-  "version": "3.3.5",
+  "version": "3.3.6",
   "type": "module",
   "scripts": {
     "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.startsWith('pnpm/')) { console.error('Use pnpm instead of npm for this project.'); process.exit(1); }\"",
@@ -10,7 +10,7 @@
     "build": "python ../scripts/generate_distribution_config.py && vue-tsc -b && vite build",
     "webview:compile": "cross-env EXV_RENDERER_TARGET=webview pnpm run build",
     "webview:package": "python ../scripts/package_ui_shell.py",
-    "test:host": "python ../scripts/generate_distribution_config.py && node scripts/run-host-test.cjs host/__tests__/host-boundary.test.ts host/__tests__/webview-package-policy.test.ts host/__tests__/desktop-contract-generated.test.ts host/__tests__/native-error-presentation.test.ts host/__tests__/ui-mode-and-connect-failure.test.ts host/__tests__/modal-onboarding-contract.test.ts host/__tests__/password-field-contract.test.ts host/__tests__/theme-dashboard-contract.test.ts",
+    "test:host": "python ../scripts/generate_distribution_config.py && node scripts/run-host-test.cjs host/__tests__/host-boundary.test.ts host/__tests__/webview-package-policy.test.ts host/__tests__/desktop-contract-generated.test.ts host/__tests__/native-error-presentation.test.ts host/__tests__/ui-mode-and-connect-failure.test.ts host/__tests__/modal-onboarding-contract.test.ts host/__tests__/password-field-contract.test.ts host/__tests__/theme-dashboard-contract.test.ts host/__tests__/about-changelog-contract.test.ts",
     "test:contract": "node scripts/run-host-test.cjs host/__tests__/desktop-contract-generated.test.ts",
     "preview": "vite preview"
   },

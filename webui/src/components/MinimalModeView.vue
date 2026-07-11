@@ -141,7 +141,7 @@ async function handlePowerClick() {
   if (vpn.serviceAvailable) {
     ok = await vpn.connect(auth.password)
   } else if (installServiceBeforeConnect.value && showServiceChoice.value) {
-    const installed = await vpn.installService()
+    const installed = await vpn.requestInstallService({ confirmWhenInactive: false })
     if (!installed) return
     ok = await vpn.connect(auth.password)
   } else {

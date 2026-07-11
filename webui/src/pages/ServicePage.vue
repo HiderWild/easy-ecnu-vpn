@@ -54,26 +54,17 @@ onUnmounted(() => {
 })
 
 function install() {
-  ui.requestConfirm(
-    '将安装 VPN 辅助服务。系统可能会请求管理员权限。',
-    () => { void runServiceAction('install') },
-  )
+  void runServiceAction('install')
 }
 
 function uninstall() {
-  const message = vpn.status?.connected
-    ? '将先断开当前 VPN 连接，然后卸载 VPN 辅助服务。系统可能会请求管理员权限。'
-    : '将卸载 VPN 辅助服务。系统可能会请求管理员权限。'
-  ui.requestConfirm(
-    message,
-    () => { void runServiceAction('uninstall') },
-  )
+  void runServiceAction('uninstall')
 }
 
 async function runServiceAction(action: 'install' | 'uninstall') {
   const ok = action === 'install'
-    ? await vpn.installService()
-    : await vpn.disconnectAndUninstallService()
+    ? await vpn.requestInstallService()
+    : await vpn.requestUninstallService()
   await vpn.fetchServiceStatus()
   if (ok) {
     ui.addToast(action === 'install' ? '辅助服务安装完成' : '辅助服务卸载完成', 'success')

@@ -84,6 +84,15 @@ void add_route_once(std::vector<exv::platform::RouteEntry>* routes,
         routes->push_back(route);
     }
 
+bool configured_broad_private_route_disabled(const exv::Config& cfg,
+                                             const std::string& destination) {
+        if (destination == "10.0.0.0/8")
+            return !cfg.include_class_a_private_routes;
+        if (destination == "172.16.0.0/12")
+            return !cfg.include_class_b_private_routes;
+        return false;
+    }
+
 std::string join_route_destinations(
         const std::vector<exv::platform::RouteEntry>& routes) {
         std::ostringstream out;
@@ -191,8 +200,11 @@ bool TunnelController::Impl::apply_tunnel_config_for_session(
                         : metadata->split_include_routes;
                 for (const auto& destination : gateway_routes)
                     add_route_once(&config.routes, destination);
-                for (const auto& destination : vpn_cfg_.routes)
+                for (const auto& destination : vpn_cfg_.routes) {
+                    if (configured_broad_private_route_disabled(vpn_cfg_, destination))
+                        continue;
                     add_route_once(&config.routes, destination);
+                }
                 if (vpn_cfg_.include_class_a_private_routes)
                     add_route_once(&config.routes, "10.0.0.0/8");
                 if (vpn_cfg_.include_class_b_private_routes)
@@ -416,6 +428,7 @@ void TunnelController::Impl::do_connect() {
                 set_error(CoreErrorMapper::from_helper_error(
                     "start_session_failed",
                     "Helper StartSession returned empty session_id"));
+                cleanup_after_failed_startup();
                 transition_to(TunnelPhase::Failed);
                 return;
             }
@@ -430,6 +443,7 @@ void TunnelController::Impl::do_connect() {
             timing_.timer.end(ConnectTiming::HELPER_PREPARE);
             set_error(CoreErrorMapper::from_helper_error(
                 "start_session_failed", e.what()));
+            cleanup_after_failed_startup();
             transition_to(TunnelPhase::Failed);
             return;
         }

@@ -781,6 +781,86 @@ describe('native WebView package policy', () => {
     assert.match(runtime, /event_pump_thread\.join\(\)/)
   })
 
+  it('refreshes tray connection state before showing the menu and keeps disconnect in the background', () => {
+    const win32Host = readFileSync(
+      join(repoRoot, 'src', 'platform', 'win32', 'ui_shell', 'webview2_host_win32.cpp'),
+      'utf8',
+    )
+    const runtime = readFileSync(join(repoRoot, 'src', 'app', 'ui_shell', 'ui_shell_runtime.cpp'), 'utf8')
+
+    assert.match(runtime, /void refresh_tray_status_from_core\(const RuntimeCoreAccess &core,\s*TrayStatusSnapshotCache &cache\)/)
+    assert.match(runtime, /request\.action = "status\.get"/)
+    assert.match(runtime, /future\.wait_for\(std::chrono::milliseconds\(500\)\)/)
+    assert.match(runtime, /runtime_config\.tray_status_snapshot_provider =\s*\[tray_snapshot_cache, &core\]\(\)/)
+    assert.match(runtime, /connected_since_/)
+    assert.match(runtime, /std::chrono::steady_clock::now\(\)/)
+    assert.match(runtime, /runtime_config\.disconnect_vpn_in_background = \[&core\]\(\)/)
+
+    const trayStart = win32Host.indexOf('void show_tray_menu()')
+    assert.notEqual(trayStart, -1)
+    const trayEnd = win32Host.indexOf('private:', trayStart)
+    assert.notEqual(trayEnd, -1)
+    const trayBlock = win32Host.slice(trayStart, trayEnd)
+    assert.match(trayBlock, /active_config_\.disconnect_vpn_in_background\(\)/)
+    const disconnectStart = trayBlock.indexOf('command == kTrayCommandDisconnect')
+    assert.notEqual(disconnectStart, -1)
+    const quitStart = trayBlock.indexOf('command == kTrayCommandQuit', disconnectStart)
+    assert.notEqual(quitStart, -1)
+    const disconnectBlock = trayBlock.slice(disconnectStart, quitStart)
+    assert.doesNotMatch(disconnectBlock, /show_from_tray\(\)/)
+  })
+
+  it('keeps smart close in tray while a VPN connect job is active', () => {
+    const runtime = readFileSync(join(repoRoot, 'src', 'app', 'ui_shell', 'ui_shell_runtime.cpp'), 'utf8')
+    const runtimeTest = readFileSync(join(repoRoot, 'tests', 'ui_shell_runtime_test.cpp'), 'utf8')
+
+    assert.match(runtime, /status_response_active_for_close/)
+    assert.match(runtime, /process_running/)
+    assert.match(runtime, /phase/)
+    assert.match(runtime, /return status_response_active_for_close\(future\.get\(\)\)\.value_or\(true\)/)
+    assert.match(runtimeTest, /\"process_running\":true/)
+    assert.match(runtimeTest, /\"phase\":\"connecting\"/)
+  })
+
+  it('opens packaged no-argument launches visibly unless hidden startup is explicit', () => {
+    const options = readFileSync(join(repoRoot, 'src', 'app', 'ui_shell', 'ui_shell_options.cpp'), 'utf8')
+    const contract = readFileSync(join(repoRoot, 'tests', 'ui_shell_contract_test.cpp'), 'utf8')
+    const win32Host = readFileSync(
+      join(repoRoot, 'src', 'platform', 'win32', 'ui_shell', 'webview2_host_win32.cpp'),
+      'utf8',
+    )
+
+    assert.match(options, /arg == "--hide-window"/)
+    assert.match(options, /options\.start_hidden = true/)
+    assert.match(options, /packaged_options\.start_hidden = options\.start_hidden/)
+    assert.match(win32Host, /ShowWindow\(hwnd_, active_config_\.start_hidden \? SW_HIDE : SW_SHOWNORMAL\)/)
+    assert.match(contract, /if \(packaged_options\.start_hidden\) \{\s*return 1;\s*\}/)
+    assert.match(contract, /if \(no_arg_resolved\.start_hidden\) \{\s*return 1;\s*\}/)
+    assert.match(contract, /hide_window_options\.start_hidden/)
+  })
+
+  it('restores minimized installed windows before resizing and brings them back on screen', () => {
+    const win32Host = readFileSync(
+      join(repoRoot, 'src', 'platform', 'win32', 'ui_shell', 'webview2_host_win32.cpp'),
+      'utf8',
+    )
+    const restoreStart = win32Host.indexOf('void restore_or_focus_window()')
+    assert.notEqual(restoreStart, -1)
+    const showTrayStart = win32Host.indexOf('void show_from_tray()', restoreStart)
+    assert.notEqual(showTrayStart, -1)
+    const restoreBlock = win32Host.slice(restoreStart, showTrayStart)
+    const iconic = restoreBlock.indexOf('IsIconic(hwnd_)')
+    const restore = restoreBlock.indexOf('ShowWindow(hwnd_, SW_RESTORE)')
+    const applyMode = restoreBlock.indexOf('apply_window_mode_once(current_window_mode_)')
+    assert.ok(iconic !== -1 && restore !== -1 && applyMode !== -1)
+    assert.ok(iconic < restore)
+    assert.ok(restore < applyMode)
+    assert.match(restoreBlock, /ensure_window_on_visible_work_area\(\)/)
+    assert.match(win32Host, /void ensure_window_on_visible_work_area\(\)/)
+    assert.match(win32Host, /MonitorFromWindow\(hwnd_, MONITOR_DEFAULTTONEAREST\)/)
+    assert.match(win32Host, /SetWindowPos\(hwnd_, nullptr, target_left, target_top/)
+  })
+
   it('starts the Win32 system titlebar move loop with a validated drag start position', () => {
     const win32Host = readFileSync(
       join(repoRoot, 'src', 'platform', 'win32', 'ui_shell', 'webview2_host_win32.cpp'),
@@ -898,7 +978,7 @@ describe('native WebView package policy', () => {
     assert.match(store, /const nextStatus = serviceStatusFromOperationResult\(data\)/)
     assert.match(store, /serviceStatus\.value = nextStatus[\s\S]*if \(nextStatus\.warning \|\| !nextStatus\.available\)/)
     assert.doesNotMatch(store, /serviceStatus\.value = data[\s\S]*if \(data\.warning \|\| !data\.available\)/)
-    assert.match(store, /const installed = await installService\(\)[\s\S]*await fetchServiceStatus\(\)[\s\S]*await connect\(\)/)
+    assert.match(store, /const installed = await requestInstallService\(\{ confirmWhenInactive: false \}\)[\s\S]*await fetchServiceStatus\(\)[\s\S]*await connect\(\)/)
     assert.match(store, /ServiceProgressEntry[\s\S]*command: 'install' \| 'uninstall' \| 'repair'/)
     assert.match(store, /async function repairService\(\)/)
     assert.match(store, /serviceOperation\.value = 'repair'/)

@@ -28,6 +28,8 @@ namespace exv {
 namespace platform {
 namespace {
 
+constexpr const char *kWintunRuntimeAsset = "wintun.dll";
+
 bool wait_until_ready(const HelperServiceManagerContext &context, int attempts,
                      unsigned int delay_us) {
   return context.wait_until_available &&
@@ -87,6 +89,40 @@ bool files_have_same_contents(const std::filesystem::path &left,
   return left_stream.eof() && right_stream.eof();
 }
 
+std::filesystem::path first_regular_file(
+    const std::vector<std::filesystem::path> &candidates) {
+  std::error_code ec;
+  for (const auto &candidate : candidates) {
+    if (!candidate.empty() && std::filesystem::is_regular_file(candidate, ec)) {
+      return candidate;
+    }
+    ec.clear();
+  }
+  return {};
+}
+
+std::filesystem::path find_packaged_wintun_runtime(
+    const std::filesystem::path &source_executable) {
+  std::vector<std::filesystem::path> candidates;
+  const std::string discovered = platform::get_bundled_wintun_path();
+  if (!discovered.empty()) {
+    candidates.emplace_back(discovered);
+  }
+
+  const std::filesystem::path source_dir = source_executable.parent_path();
+  if (!source_dir.empty()) {
+    candidates.push_back(source_dir / kWintunRuntimeAsset);
+    candidates.push_back(source_dir / "runtime" / kWintunRuntimeAsset);
+
+    const std::filesystem::path package_root = source_dir.parent_path();
+    if (!package_root.empty()) {
+      candidates.push_back(package_root / kWintunRuntimeAsset);
+      candidates.push_back(package_root / "runtime" / kWintunRuntimeAsset);
+    }
+  }
+  return first_regular_file(candidates);
+}
+
 bool ensure_stable_helper_binary(const std::filesystem::path &source,
                                  const std::filesystem::path &target,
                                  bool *refreshed) {
@@ -125,6 +161,64 @@ bool ensure_stable_helper_binary(const std::filesystem::path &source,
   if (refreshed)
     *refreshed = true;
   return true;
+}
+
+bool ensure_stable_helper_runtime_asset(const std::filesystem::path &source,
+                                        const std::filesystem::path &target,
+                                        bool *refreshed) {
+  if (refreshed)
+    *refreshed = false;
+
+  if (source.empty()) {
+    exv::observability::LogFacade::warn(
+        "Packaged wintun.dll was not found; stable helper runtime was not "
+        "refreshed.");
+    return true;
+  }
+
+  std::error_code ec;
+  if (!std::filesystem::is_regular_file(source, ec)) {
+    exv::observability::LogFacade::warn(
+        "Packaged wintun.dll path is not a regular file: " + source.string());
+    return true;
+  }
+  ec.clear();
+
+  std::filesystem::create_directories(target.parent_path(), ec);
+  if (ec) {
+    cli::print_error("Failed to create stable helper runtime directory: " +
+                     ec.message());
+    return false;
+  }
+
+  if (std::filesystem::equivalent(source, target, ec)) {
+    return true;
+  }
+  ec.clear();
+
+  if (files_have_same_contents(source, target)) {
+    return true;
+  }
+
+  std::filesystem::copy_file(source, target,
+                             std::filesystem::copy_options::overwrite_existing,
+                             ec);
+  if (ec) {
+    cli::print_error("Failed to refresh stable helper wintun.dll: " +
+                     ec.message());
+    return false;
+  }
+  if (refreshed)
+    *refreshed = true;
+  return true;
+}
+
+bool ensure_stable_helper_runtime(const std::filesystem::path &source_executable,
+                                  const std::filesystem::path &stable_helper_path,
+                                  bool *refreshed) {
+  return ensure_stable_helper_runtime_asset(
+      find_packaged_wintun_runtime(source_executable),
+      stable_helper_path.parent_path() / kWintunRuntimeAsset, refreshed);
 }
 
 struct ServiceConfigSnapshot {
@@ -258,6 +352,13 @@ int install_helper_service(const std::string &executable_path,
     return 1;
   }
 
+  bool runtime_refreshed = false;
+  if (!ensure_stable_helper_runtime(packaged_helper_path, stable_helper_path,
+                                    &runtime_refreshed)) {
+    CloseServiceHandle(hSCM);
+    return 1;
+  }
+
   std::string binary_path = "\"" + stable_helper_path.string() + "\" --service";
 
   cli::print_info("Registering helper service...");
@@ -273,8 +374,9 @@ int install_helper_service(const std::string &executable_path,
       cli::print_info(
           "Helper service is already installed. Refreshing service configuration...");
       hService = OpenServiceA(hSCM, platform_config.service_name,
-                              SERVICE_CHANGE_CONFIG | SERVICE_QUERY_STATUS |
-                                  SERVICE_START | SERVICE_STOP);
+                              SERVICE_CHANGE_CONFIG | SERVICE_QUERY_CONFIG |
+                                  SERVICE_QUERY_STATUS | SERVICE_START |
+                                  SERVICE_STOP);
       if (!hService) {
         exv::observability::LogFacade::error("OpenService failed: " +
                       std::to_string(GetLastError()));
@@ -304,9 +406,9 @@ int install_helper_service(const std::string &executable_path,
       SERVICE_STATUS service_status = {};
       if (QueryServiceStatus(hService, &service_status) &&
           service_status.dwCurrentState != SERVICE_STOPPED &&
-          (binary_path_changed || helper_refreshed)) {
+          (binary_path_changed || helper_refreshed || runtime_refreshed)) {
         cli::print_info(
-            "Restarting helper service to apply the new binary path...");
+            "Restarting helper service to apply refreshed helper runtime...");
         ControlService(hService, SERVICE_CONTROL_STOP, &service_status);
         for (int i = 0; i < 50; ++i) {
           if (!QueryServiceStatus(hService, &service_status) ||
@@ -429,6 +531,21 @@ int uninstall_helper_service(const HelperServiceManagerContext &context) {
       exv::observability::LogFacade::warn(
           "Could not remove stable helper binary: " + remove_ec.message());
     }
+    remove_ec.clear();
+    std::filesystem::remove(
+        std::filesystem::path(platform_config.default_service_binary_path)
+            .parent_path() /
+            kWintunRuntimeAsset,
+        remove_ec);
+    if (remove_ec) {
+      exv::observability::LogFacade::warn(
+          "Could not remove stable helper wintun.dll: " + remove_ec.message());
+    }
+    remove_ec.clear();
+    std::filesystem::remove(
+        std::filesystem::path(platform_config.default_service_binary_path)
+            .parent_path(),
+        remove_ec);
   }
   terminate_orphan_oneshot_helpers(
       current_process_is_service ? static_cast<DWORD>(GetCurrentProcessId())
@@ -454,6 +571,29 @@ int repair_helper_service(const HelperServiceManagerContext &context) {
     return 1;
   }
 
+  std::string exec_path = platform::get_executable_path();
+  if (exec_path.empty()) {
+    exv::observability::LogFacade::error(
+        "Failed to resolve the exv-helper executable path.");
+    return 1;
+  }
+
+  const std::filesystem::path packaged_helper_path(exec_path);
+  const std::filesystem::path stable_helper_path =
+      platform_config.default_service_binary_path;
+
+  bool helper_refreshed = false;
+  if (!ensure_stable_helper_binary(packaged_helper_path, stable_helper_path,
+                                   &helper_refreshed)) {
+    return 1;
+  }
+
+  bool runtime_refreshed = false;
+  if (!ensure_stable_helper_runtime(packaged_helper_path, stable_helper_path,
+                                    &runtime_refreshed)) {
+    return 1;
+  }
+
   SC_HANDLE hSCM = OpenSCManagerA(NULL, NULL, SC_MANAGER_CONNECT);
   if (!hSCM) {
     exv::observability::LogFacade::error("Cannot open Service Control Manager");
@@ -462,16 +602,23 @@ int repair_helper_service(const HelperServiceManagerContext &context) {
 
   SC_HANDLE hService = OpenServiceA(
       hSCM, platform_config.service_name,
-      SERVICE_CHANGE_CONFIG | SERVICE_START | SERVICE_QUERY_STATUS);
+      SERVICE_CHANGE_CONFIG | SERVICE_START | SERVICE_STOP |
+          SERVICE_QUERY_CONFIG | SERVICE_QUERY_STATUS);
   if (!hService) {
     CloseServiceHandle(hSCM);
     cli::print_error("Helper service is not installed.");
     return 1;
   }
 
+  const std::string binary_path =
+      "\"" + stable_helper_path.string() + "\" --service";
+  const ServiceConfigSnapshot service_config = query_service_config(hService);
+  const bool binary_path_changed =
+      !service_config.valid || service_config.binary_path != binary_path;
+
   if (!ChangeServiceConfigA(hService, SERVICE_NO_CHANGE, SERVICE_AUTO_START,
-                            SERVICE_NO_CHANGE, NULL, NULL, NULL, NULL, NULL,
-                            NULL, NULL)) {
+                            SERVICE_NO_CHANGE, binary_path.c_str(), NULL, NULL,
+                            NULL, NULL, NULL, NULL)) {
     exv::observability::LogFacade::error("ChangeServiceConfig failed: " +
                                          std::to_string(GetLastError()));
     CloseServiceHandle(hService);
@@ -480,6 +627,20 @@ int repair_helper_service(const HelperServiceManagerContext &context) {
   }
 
   SERVICE_STATUS status = {};
+  if (QueryServiceStatus(hService, &status) &&
+      status.dwCurrentState != SERVICE_STOPPED &&
+      (binary_path_changed || helper_refreshed || runtime_refreshed)) {
+    cli::print_info("Restarting helper service to apply refreshed helper runtime...");
+    ControlService(hService, SERVICE_CONTROL_STOP, &status);
+    for (int i = 0; i < 50; ++i) {
+      if (!QueryServiceStatus(hService, &status) ||
+          status.dwCurrentState == SERVICE_STOPPED) {
+        break;
+      }
+      Sleep(100);
+    }
+  }
+
   if (QueryServiceStatus(hService, &status) &&
       status.dwCurrentState != SERVICE_RUNNING) {
     cli::print_info("Starting helper service...");

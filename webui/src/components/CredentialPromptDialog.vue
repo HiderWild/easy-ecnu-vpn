@@ -128,7 +128,7 @@ function enterFullCredentialPrompt() {
           autocomplete="current-password"
           input-class="w-full rounded-lg border border-border bg-bg px-3 py-2 pr-11 text-sm text-foreground outline-none focus:border-primary"
           :show-reveal-button="!props.compact"
-          :show-saved-password-overwrite-hint="showSavedPasswordOverwriteHint && !props.compact"
+          :show-saved-password-overwrite-hint="showSavedPasswordOverwriteHint"
           @input="error = ''"
           @keydown.esc.prevent="cancel"
         />

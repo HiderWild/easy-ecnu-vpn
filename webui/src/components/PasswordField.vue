@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { computed, ref } from 'vue'
 import PasswordRevealButton from './PasswordRevealButton.vue'
 
 defineOptions({
   inheritAttrs: false,
 })
 
-withDefaults(defineProps<{
+const props = withDefaults(defineProps<{
   modelValue: string
   placeholder?: string
   autocomplete?: string
@@ -28,6 +28,13 @@ withDefaults(defineProps<{
   autofocus: false,
   showSavedPasswordOverwriteHint: false,
 })
+
+const savedPasswordOverwritePlaceholder = '您已保存过密码，输入并确认后将覆盖原有密码'
+const effectivePlaceholder = computed(() =>
+  props.showSavedPasswordOverwriteHint && !props.modelValue
+    ? savedPasswordOverwritePlaceholder
+    : props.placeholder,
+)
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
@@ -57,30 +64,27 @@ defineExpose({ focus })
 </script>
 
 <template>
-  <div :class="wrapperClass">
+  <div :class="props.wrapperClass">
     <div class="relative">
       <input
         ref="inputRef"
         v-bind="$attrs"
-        :value="modelValue"
+        :value="props.modelValue"
         :type="revealed ? 'text' : 'password'"
-        :autocomplete="autocomplete"
-        :placeholder="placeholder"
-        :disabled="disabled"
-        :autofocus="autofocus"
-        :class="inputClass"
+        :autocomplete="props.autocomplete"
+        :placeholder="effectivePlaceholder"
+        :disabled="props.disabled"
+        :autofocus="props.autofocus"
+        :class="props.inputClass"
         @input="updateValue"
         @blur="blur"
         @keyup.enter="emit('keyupEnter', $event)"
       />
       <PasswordRevealButton
-        v-if="showRevealButton"
+        v-if="props.showRevealButton"
         v-model:revealed="revealed"
-        :class="revealButtonClass"
+        :class="props.revealButtonClass"
       />
     </div>
-    <p v-if="showSavedPasswordOverwriteHint" class="mt-1 text-xs text-muted">
-      您已保存过密码，输入并确认后将覆盖原有密码
-    </p>
   </div>
 </template>

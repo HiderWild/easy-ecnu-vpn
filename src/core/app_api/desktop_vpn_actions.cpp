@@ -947,6 +947,7 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         }
         if (controller) {
           controller->disconnect(exv::core::DisconnectReason::UserRequested);
+          reset_tunnel_controller();
         }
         namespace conn_attempt = exv::connection_attempt;
         conn_attempt::mark_terminal(platform::get_config_dir(),

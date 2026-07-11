@@ -66,8 +66,17 @@ describe('password field contract', () => {
     assert.match(button, /event\.key === 'Enter'/)
   })
 
-  it('shows the unified stored-password overwrite hint at save-password entry points', () => {
+  it('uses the unified stored-password overwrite hint as the empty password placeholder', () => {
+    const passwordField = readSource('src', 'components', 'PasswordField.vue')
+
+    assert.match(passwordField, new RegExp(`const savedPasswordOverwritePlaceholder = '${overwriteHintText}'`))
+    assert.match(passwordField, /effectivePlaceholder/)
+    assert.match(passwordField, /showSavedPasswordOverwriteHint && !props\.modelValue/)
+    assert.match(passwordField, /:placeholder="effectivePlaceholder"/)
+    assert.doesNotMatch(passwordField, /<p v-if="showSavedPasswordOverwriteHint"/)
+
     const files = [
+      ['src', 'pages', 'AuthPage.vue'],
       ['src', 'components', 'MinimalModeView.vue'],
       ['src', 'pages', 'settings', 'SettingsAuthSection.vue'],
       ['src', 'components', 'QuickStartDialog.vue'],
@@ -91,6 +100,11 @@ describe('password field contract', () => {
         source.includes('已保存加密密码，仅在需要修改时输入。'),
         false,
         `${relativeVuePath(file)} should not use the legacy saved-password hint`,
+      )
+      assert.equal(
+        source.includes('留空表示保留原密码，输入新密码覆盖'),
+        false,
+        `${relativeVuePath(file)} should not use a separate saved-password placeholder`,
       )
     }
   })

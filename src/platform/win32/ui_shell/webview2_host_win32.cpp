@@ -10,6 +10,7 @@
 #include <windows.h>
 #include <windowsx.h>
 
+#include <algorithm>
 #include <condition_variable>
 #include <cstdint>
 #include <filesystem>
@@ -478,8 +479,9 @@ public:
     start_host_bridge_worker();
 
     running_ = true;
-    ShowWindow(hwnd_, active_config_.start_hidden ? SW_HIDE : SW_SHOW);
+    ShowWindow(hwnd_, active_config_.start_hidden ? SW_HIDE : SW_SHOWNORMAL);
     if (!active_config_.start_hidden) {
+      ensure_window_on_visible_work_area();
       UpdateWindow(hwnd_);
     }
 
@@ -1038,22 +1040,80 @@ public:
     create_tray_icon();
   }
 
+  void ensure_window_on_visible_work_area() {
+    if (!hwnd_) {
+      return;
+    }
+    RECT rect{};
+    if (!GetWindowRect(hwnd_, &rect)) {
+      return;
+    }
+    const int width = rect.right - rect.left;
+    const int height = rect.bottom - rect.top;
+    if (width <= 0 || height <= 0) {
+      return;
+    }
+
+    HMONITOR monitor = MonitorFromWindow(hwnd_, MONITOR_DEFAULTTONEAREST);
+    MONITORINFO info{};
+    info.cbSize = sizeof(info);
+    if (!monitor || !GetMonitorInfoW(monitor, &info)) {
+      return;
+    }
+    const RECT work = info.rcWork;
+    const int work_left = static_cast<int>(work.left);
+    const int work_top = static_cast<int>(work.top);
+    const int work_right = static_cast<int>(work.right);
+    const int work_bottom = static_cast<int>(work.bottom);
+    const int work_width = work_right - work_left;
+    const int work_height = work_bottom - work_top;
+    if (work_width <= 0 || work_height <= 0) {
+      return;
+    }
+
+    int target_left = rect.left;
+    int target_top = rect.top;
+    if (width >= work_width) {
+      target_left = work_left;
+    } else if (rect.right <= work_left || rect.left >= work_right) {
+      target_left = work_left + (work_width - width) / 2;
+    } else {
+      target_left = std::clamp(target_left, work_left, work_right - width);
+    }
+
+    if (height >= work_height) {
+      target_top = work_top;
+    } else if (rect.bottom <= work_top || rect.top >= work_bottom) {
+      target_top = work_top + (work_height - height) / 2;
+    } else {
+      target_top = std::clamp(target_top, work_top, work_bottom - height);
+    }
+
+    if (target_left != rect.left || target_top != rect.top) {
+      SetWindowPos(hwnd_, nullptr, target_left, target_top, 0, 0,
+                   SWP_NOSIZE | SWP_NOZORDER | SWP_NOACTIVATE);
+    }
+  }
+
   void restore_or_focus_window() {
     if (!hwnd_) {
       return;
     }
+    clear_window_control_state();
     if (IsIconic(hwnd_)) {
       ShowWindow(hwnd_, SW_RESTORE);
-    } else if (!IsWindowVisible(hwnd_)) {
-      ShowWindow(hwnd_, SW_SHOW);
-    } else {
-      ShowWindow(hwnd_, SW_SHOW);
     }
-    if (GetForegroundWindow() != hwnd_) {
-      SetWindowPos(hwnd_, HWND_TOP, 0, 0, 0, 0,
-                   SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
-      SetForegroundWindow(hwnd_);
-    }
+    ShowWindow(hwnd_, SW_SHOWNORMAL);
+    apply_window_mode_once(current_window_mode_);
+    ensure_window_on_visible_work_area();
+    UpdateWindow(hwnd_);
+    SetWindowPos(hwnd_, HWND_TOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    SetWindowPos(hwnd_, HWND_NOTOPMOST, 0, 0, 0, 0,
+                 SWP_NOMOVE | SWP_NOSIZE | SWP_SHOWWINDOW);
+    BringWindowToTop(hwnd_);
+    SetActiveWindow(hwnd_);
+    SetForegroundWindow(hwnd_);
   }
 
   void show_from_tray() {

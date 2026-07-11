@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import { useConfigStore, type AuthConfig } from '../stores/config'
 import { useUiStore } from '../stores/ui'
 import { Shield, User, Key, Fingerprint, Server } from 'lucide-vue-next'
@@ -57,11 +57,7 @@ watch(
   },
 )
 
-const passwordPlaceholder = computed(() =>
-  form.value.password_stored
-    ? '留空表示保留原密码，输入新密码覆盖'
-    : '请输入密码'
-)
+const passwordPlaceholder = '请输入密码'
 
 function extractErrorText(err: any): string {
   return (

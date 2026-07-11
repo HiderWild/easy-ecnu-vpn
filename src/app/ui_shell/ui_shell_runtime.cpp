@@ -61,7 +61,15 @@ class TrayStatusSnapshotCache {
 public:
   TrayStatusSnapshot snapshot() const {
     std::lock_guard<std::mutex> lock(mutex_);
-    return snapshot_;
+    TrayStatusSnapshot copy = snapshot_;
+    if (copy.connected && connected_since_.has_value()) {
+      const auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(
+          std::chrono::steady_clock::now() - connected_since_.value());
+      if (elapsed > copy.connected_duration) {
+        copy.connected_duration = elapsed;
+      }
+    }
+    return copy;
   }
 
   void update_from_response(const std::string &response_json) {
@@ -76,6 +84,16 @@ public:
     }
   }
 
+  void update_from_core_response(const CoreRpcResponse &response) {
+    if (!response.ok || response.data_json.empty()) {
+      return;
+    }
+    try {
+      update_from_status_json(nlohmann::json::parse(response.data_json));
+    } catch (const nlohmann::json::exception &) {
+    }
+  }
+
   void update_from_event(const CoreRpcEvent &event) {
     try {
       const auto data = event.data_json.empty()
@@ -84,17 +102,18 @@ public:
       if (event.event == "vpn.disconnected" ||
           event.event == "tunnel.disconnected") {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.connected = false;
-        snapshot_.connected_duration = std::chrono::seconds{0};
+        mark_disconnected_locked();
         return;
       }
       if (event.event == "vpn.connected" || event.event == "tunnel.connected") {
         std::lock_guard<std::mutex> lock(mutex_);
-        snapshot_.connected = true;
+        const auto now = std::chrono::steady_clock::now();
+        std::optional<std::string> username;
         if (data.is_object() && data.contains("username") &&
             data["username"].is_string()) {
-          snapshot_.username = data["username"].get<std::string>();
+          username = data["username"].get<std::string>();
         }
+        mark_connected_locked(now, username, duration_from_status(data));
         return;
       }
       update_from_status_json(data);
@@ -109,30 +128,69 @@ private:
       return;
     }
 
-    TrayStatusSnapshot next;
-    next.connected = data["connected"].get<bool>();
+    const auto now = std::chrono::steady_clock::now();
+    std::optional<std::string> username;
     if (data.contains("username") && data["username"].is_string()) {
-      next.username = data["username"].get<std::string>();
+      username = data["username"].get<std::string>();
     }
-    next.connected_duration = std::chrono::seconds(duration_seconds(data));
+    const auto connected = data["connected"].get<bool>();
+    const auto duration = duration_from_status(data);
 
     std::lock_guard<std::mutex> lock(mutex_);
-    snapshot_ = std::move(next);
+    if (connected) {
+      mark_connected_locked(now, username, duration);
+    } else {
+      if (username.has_value()) {
+        snapshot_.username = *username;
+      }
+      mark_disconnected_locked();
+    }
   }
 
-  static std::int64_t duration_seconds(const nlohmann::json &data) {
-    for (const char *key : {"connected_seconds", "connected_duration_seconds",
-                            "duration_seconds", "connected_duration"}) {
+  static std::optional<std::chrono::seconds>
+  duration_from_status(const nlohmann::json &data) {
+    if (!data.is_object()) {
+      return std::nullopt;
+    }
+    for (const char *key : {"uptime_seconds", "connected_seconds",
+                            "connected_duration_seconds", "duration_seconds",
+                            "connected_duration"}) {
       if (data.contains(key) && data[key].is_number_integer()) {
         const auto value = data[key].get<std::int64_t>();
-        return value > 0 ? value : 0;
+        return std::chrono::seconds(value > 0 ? value : 0);
       }
     }
-    return 0;
+    return std::nullopt;
+  }
+
+  void mark_connected_locked(
+      std::chrono::steady_clock::time_point now,
+      const std::optional<std::string> &username,
+      std::optional<std::chrono::seconds> reported_duration) {
+    if (username.has_value()) {
+      snapshot_.username = *username;
+    }
+    if (!snapshot_.connected || !connected_since_.has_value()) {
+      connected_since_ = now - reported_duration.value_or(std::chrono::seconds{0});
+    } else if (reported_duration.has_value()) {
+      connected_since_ = now - reported_duration.value();
+    }
+    snapshot_.connected = true;
+    if (connected_since_.has_value()) {
+      snapshot_.connected_duration = std::chrono::duration_cast<std::chrono::seconds>(
+          now - connected_since_.value());
+    }
+  }
+
+  void mark_disconnected_locked() {
+    snapshot_.connected = false;
+    snapshot_.connected_duration = std::chrono::seconds{0};
+    connected_since_.reset();
   }
 
   mutable std::mutex mutex_;
   TrayStatusSnapshot snapshot_;
+  std::optional<std::chrono::steady_clock::time_point> connected_since_;
 };
 
 int request_id_from_message(const std::string &message_json) {
@@ -175,17 +233,71 @@ void request_core_shutdown(const RuntimeCoreAccess &core) {
   (void)future.wait_for(std::chrono::seconds(2));
 }
 
-std::optional<bool> status_response_connected(const CoreRpcResponse &response) {
+bool status_phase_active_for_close(std::string_view phase) {
+  return phase == "preparing_helper" || phase == "authenticating" ||
+         phase == "connecting" || phase == "connecting_cstp" ||
+         phase == "applying_network_config" ||
+         phase == "opening_packet_device" || phase == "connected" ||
+         phase == "reconnecting" || phase == "disconnecting" ||
+         phase == "cleaning_up";
+}
+
+std::optional<bool>
+status_response_active_for_close(const CoreRpcResponse &response) {
   if (!response.ok || response.data_json.empty()) {
     return std::nullopt;
   }
   try {
     const auto data = nlohmann::json::parse(response.data_json);
-    if (!data.is_object() || !data.contains("connected") ||
-        !data["connected"].is_boolean()) {
+    if (!data.is_object()) {
       return std::nullopt;
     }
-    return data["connected"].get<bool>();
+    if (data.contains("connected") && data["connected"].is_boolean() &&
+        data["connected"].get<bool>()) {
+      return true;
+    }
+    if (data.contains("process_running") && data["process_running"].is_boolean() &&
+        data["process_running"].get<bool>()) {
+      return true;
+    }
+    if (data.contains("session_active") && data["session_active"].is_boolean() &&
+        data["session_active"].get<bool>()) {
+      return true;
+    }
+    if (data.contains("network_ready") && data["network_ready"].is_boolean() &&
+        data["network_ready"].get<bool>()) {
+      return true;
+    }
+    if (data.contains("phase") && data["phase"].is_string() &&
+        status_phase_active_for_close(data["phase"].get<std::string>())) {
+      return true;
+    }
+    if (data.contains("phase") && data["phase"].is_string()) {
+      return false;
+    }
+    if (data.contains("desired_connected") &&
+        data["desired_connected"].is_boolean() &&
+        data["desired_connected"].get<bool>()) {
+      return true;
+    }
+    if (data.contains("connected") && data["connected"].is_boolean()) {
+      return false;
+    }
+    if (data.contains("process_running") &&
+        data["process_running"].is_boolean()) {
+      return false;
+    }
+    if (data.contains("desired_connected") &&
+        data["desired_connected"].is_boolean()) {
+      return false;
+    }
+    if (data.contains("session_active") && data["session_active"].is_boolean()) {
+      return false;
+    }
+    if (data.contains("network_ready") && data["network_ready"].is_boolean()) {
+      return false;
+    }
+    return std::nullopt;
   } catch (const nlohmann::json::exception &) {
     return std::nullopt;
   }
@@ -203,7 +315,29 @@ bool query_vpn_connected_for_close(const RuntimeCoreAccess &core) {
       std::future_status::ready) {
     return true;
   }
-  return status_response_connected(future.get()).value_or(true);
+  return status_response_active_for_close(future.get()).value_or(true);
+}
+
+void refresh_tray_status_from_core(const RuntimeCoreAccess &core,
+                                   TrayStatusSnapshotCache &cache) {
+  if (!core.invoke_async) {
+    return;
+  }
+  try {
+    static std::atomic_int tray_status_request_id{1300000000};
+    CoreRpcRequest request;
+    request.action = "status.get";
+    request.payload_json = nlohmann::json::object().dump();
+    request.request_id = std::to_string(++tray_status_request_id);
+
+    auto future = core.invoke_async(std::move(request));
+    if (future.wait_for(std::chrono::milliseconds(500)) !=
+        std::future_status::ready) {
+      return;
+    }
+    cache.update_from_core_response(future.get());
+  } catch (...) {
+  }
 }
 
 int run_ui_shell_window(UiWindow &window,
@@ -229,8 +363,10 @@ int run_ui_shell_window(UiWindow &window,
   runtime_config.is_vpn_connected = [&core]() {
     return query_vpn_connected_for_close(core);
   };
-  runtime_config.tray_status_snapshot_provider =
-      [tray_snapshot_cache]() { return tray_snapshot_cache->snapshot(); };
+  runtime_config.tray_status_snapshot_provider = [tray_snapshot_cache, &core]() {
+    refresh_tray_status_from_core(core, *tray_snapshot_cache);
+    return tray_snapshot_cache->snapshot();
+  };
   runtime_config.disconnect_vpn_in_background = [&core]() {
     static std::atomic_int disconnect_request_id{1200000000};
     CoreRpcRequest request;

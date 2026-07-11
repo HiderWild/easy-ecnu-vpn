@@ -110,6 +110,8 @@ UiShellOptions parse_ui_shell_options(int argc, char **argv) {
       options.enable_dev_tools = true;
     } else if (arg == "--show-window") {
       options.start_hidden = false;
+    } else if (arg == "--hide-window") {
+      options.start_hidden = true;
     }
   }
   return options;

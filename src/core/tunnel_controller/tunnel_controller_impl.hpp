@@ -58,7 +58,8 @@ struct TunnelController::Impl {
   void schedule_next_core_lease_keepalive();
   void do_core_lease_keepalive();
   bool acquire_core_lease();
-  void release_core_lease();
+  bool release_core_lease();
+  void close_helper_client_after_terminal_disconnect();
 
   bool prepare_tunnel_device_for_session(
       exv::platform::TunnelDeviceDescriptor *device);

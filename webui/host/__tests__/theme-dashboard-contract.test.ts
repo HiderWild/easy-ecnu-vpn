@@ -56,7 +56,7 @@ describe('theme dashboard contract', () => {
     const dashboardText = readWebui('src', 'pages', 'DashboardPage.vue')
     const expectedComponents = [
       'DashboardConnectionHero.vue',
-      'DashboardTopologyMap.vue',
+      'DashboardVisualStage.vue',
       'DashboardStatusRail.vue',
       'DashboardActionBar.vue',
     ]
@@ -67,7 +67,20 @@ describe('theme dashboard contract', () => {
     }
 
     assert.match(dashboardText, /dashboard-page-grid/)
+    assert.match(dashboardText, /dashboard-page-grid__visual/)
     assert.doesNotMatch(dashboardText, /dashboard-card/)
+    assert.doesNotMatch(dashboardText, /DashboardTopologyMap/)
+    assert.doesNotMatch(dashboardText, /topologyNodes|arcSegments|visibleReadySegments/)
+  })
+
+  it('prepares the dashboard center area as an animation-ready visual stage', () => {
+    const dashboardText = readWebui('src', 'pages', 'DashboardPage.vue')
+    const visualStageText = readWebui('src', 'components', 'dashboard', 'DashboardVisualStage.vue')
+
+    assert.match(dashboardText, /DashboardVisualStage/)
+    assert.match(visualStageText, /data-visual-stage="character"/)
+    assert.match(visualStageText, /<slot name="character">/)
+    assert.doesNotMatch(visualStageText, /dashboard-topology|Topology|arcSegments|visibleReadySegments|<svg/)
   })
 
   it('keeps status motion meaningful and disables it for reduced motion users', () => {
@@ -75,14 +88,14 @@ describe('theme dashboard contract', () => {
     const dashboardFiles = [
       readWebui('src', 'pages', 'DashboardPage.vue'),
       readWebui('src', 'components', 'dashboard', 'DashboardConnectionHero.vue'),
-      readWebui('src', 'components', 'dashboard', 'DashboardTopologyMap.vue'),
+      readWebui('src', 'components', 'dashboard', 'DashboardVisualStage.vue'),
       readWebui('src', 'components', 'dashboard', 'DashboardStatusRail.vue'),
       readWebui('src', 'components', 'dashboard', 'DashboardActionBar.vue'),
     ].join('\n')
 
     assert.match(styleText, /@media \(prefers-reduced-motion:\s*reduce\)/)
     assert.match(dashboardFiles, /@media \(prefers-reduced-motion:\s*reduce\)/)
-    assert.match(dashboardFiles, /dashboard-topology__pulse/)
+    assert.match(dashboardFiles, /dashboard-visual-stage__signal/)
     assert.match(dashboardFiles, /dashboard-hero__ring/)
     assert.match(dashboardFiles, /dashboard-status-rail__online-dot/)
     assert.doesNotMatch(dashboardFiles, /transition:\s*all\b/)

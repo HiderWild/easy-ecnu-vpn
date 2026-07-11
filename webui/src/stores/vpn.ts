@@ -15,6 +15,16 @@ export interface UpstreamVirtualAdapter {
   route_reason?: string
 }
 
+export interface VpnStatusLastError {
+  domain?: string
+  code?: string
+  message?: string
+  recoverable?: boolean
+  recommended_action?: string
+  native_code?: string | number
+  native_api?: string
+}
+
 export interface VpnStatus {
   connected: boolean
   process_running?: boolean
@@ -41,6 +51,7 @@ export interface VpnStatus {
   error?: string
   error_code?: string
   error_recoverable?: boolean
+  last_error?: VpnStatusLastError
 }
 
 export interface VpnConnectAccepted {
@@ -315,6 +326,19 @@ function isBenignCancelTransportError(error: VpnError) {
       )
     )
 }
+
+const serviceDisconnectPhases = new Set([
+  'connecting',
+  'preparing_helper',
+  'authenticating',
+  'connecting_cstp',
+  'opening_packet_device',
+  'applying_network_config',
+  'connected',
+  'reconnecting',
+  'disconnecting',
+  'cleaning_up',
+])
 
 type NativeErrorDescriptor = {
   error_type: VpnErrorType
@@ -902,12 +926,41 @@ export const useVpnStore = defineStore('vpn', () => {
     startUptimeTimer()
   }
 
+  function statusErrorForConnect(nextStatus: VpnStatus) {
+    if (nextStatus.last_error) {
+      return {
+        code: nextStatus.last_error.code || nextStatus.error_code || 'connection_failed',
+        message: nextStatus.last_error.message || nextStatus.error || '连接失败，请打开日志查看详细原因后重试。',
+        recoverable: nextStatus.last_error.recoverable ?? nextStatus.error_recoverable ?? true,
+        recommended_action: nextStatus.last_error.recommended_action,
+      }
+    }
+    if (nextStatus.error_code || nextStatus.error) {
+      return {
+        code: nextStatus.error_code || 'connection_failed',
+        message: nextStatus.error || '连接失败，请打开日志查看详细原因后重试。',
+        recoverable: nextStatus.error_recoverable ?? true,
+        recommended_action: undefined,
+      }
+    }
+    if (String(nextStatus.phase ?? '').toLowerCase() === 'failed') {
+      return {
+        code: 'connection_failed',
+        message: '连接失败，请打开日志查看详细原因后重试。',
+        recoverable: true,
+        recommended_action: undefined,
+      }
+    }
+    return null
+  }
+
   function isTerminalConnectStatus(nextStatus: VpnStatus) {
     return Boolean(
       nextStatus.connected ||
       nextStatus.error_code ||
       nextStatus.error ||
-      nextStatus.phase === 'failed',
+      nextStatus.last_error ||
+      String(nextStatus.phase ?? '').toLowerCase() === 'failed',
     )
   }
 
@@ -915,17 +968,19 @@ export const useVpnStore = defineStore('vpn', () => {
     status.value = nextStatus
     syncUptime(nextStatus)
     if (connectInFlight.value && isTerminalConnectStatus(nextStatus)) {
+      const terminalError = statusErrorForConnect(nextStatus)
       if (
         !nextStatus.connected &&
-        (nextStatus.error_code || nextStatus.error) &&
-        nextStatus.error_code !== 'user_cancelled'
+        terminalError &&
+        terminalError.code !== 'user_cancelled'
       ) {
         lastFailedConnectMode.value = activeConnectMode.value ?? 'helper'
         setError(normalizeError({
           ok: false,
-          code: nextStatus.error_code || 'connection_failed',
-          message: nextStatus.error || '连接失败，请打开日志查看详细原因后重试。',
-          recoverable: nextStatus.error_recoverable ?? true,
+          code: terminalError.code || 'connection_failed',
+          message: terminalError.message || '连接失败，请打开日志查看详细原因后重试。',
+          recoverable: terminalError.recoverable,
+          recommended_action: terminalError.recommended_action,
         }))
       }
       connectInFlight.value = false
@@ -992,7 +1047,7 @@ export const useVpnStore = defineStore('vpn', () => {
   const recoverableErrorAction = computed<DashboardAction | null>(() => {
     switch (lastErrorType.value) {
       case 'elevation_denied':
-        return { label: '安装服务', action: () => installService(), variant: 'primary' }
+        return { label: '安装服务', action: () => { void requestInstallService() }, variant: 'primary' }
       case 'config_invalid':
         return { label: '前往设置', action: () => {}, variant: 'primary' }
       case 'auth_failed':
@@ -1031,7 +1086,7 @@ export const useVpnStore = defineStore('vpn', () => {
       case 'service-ready disconnected':
         return { label: '连接', action: () => connect(), variant: 'primary' }
       case 'service-missing disconnected':
-        return { label: '安装服务（推荐）', action: () => installService(), variant: 'primary' }
+        return { label: '安装服务（推荐）', action: () => { void requestInstallService() }, variant: 'primary' }
       case 'helper connected':
         return { label: '断开连接', action: () => disconnect(), variant: 'destructive' }
       case 'direct connected':
@@ -1056,7 +1111,7 @@ export const useVpnStore = defineStore('vpn', () => {
           : null
       case 'direct connected':
       case 'elevated connected':
-        return { label: '安装服务', action: () => installService(), variant: 'secondary' }
+        return { label: '安装服务', action: () => { void requestInstallService() }, variant: 'secondary' }
       case 'error recoverable':
         return { label: '关闭', action: () => clearError(), variant: 'secondary' }
       default:
@@ -1598,7 +1653,7 @@ export const useVpnStore = defineStore('vpn', () => {
 
     const shouldInstallService = installServiceFirst && !serviceInstalled.value && !serviceAvailable.value
     if (shouldInstallService) {
-      const installed = await installService()
+      const installed = await requestInstallService({ confirmWhenInactive: false })
       if (!installed) return
       await fetchServiceStatus()
       await connect()
@@ -1634,6 +1689,105 @@ export const useVpnStore = defineStore('vpn', () => {
       disconnectInFlight.value = false
       loading.value = false
     }
+  }
+
+  function activeVpnWorkflow() {
+    return serviceOperationNeedsVpnDisconnect()
+  }
+
+  function serviceOperationNeedsVpnDisconnect() {
+    return Boolean(
+      connectInFlight.value ||
+      disconnectInFlight.value ||
+      status.value?.connected ||
+      status.value?.network_ready ||
+      serviceDisconnectPhases.has(status.value?.phase || ''),
+    )
+  }
+
+  async function disconnectForServiceOperation(operation: 'install' | 'uninstall') {
+    if (connectInFlight.value) {
+      const cancelled = await cancelConnect()
+      if (!cancelled) return false
+    }
+
+    await fetchStatus()
+    if (serviceOperationNeedsVpnDisconnect()) {
+      const disconnected = currentSessionMode.value === 'elevated'
+        ? await disconnectElevated()
+        : await disconnect()
+      if (!disconnected) return false
+    }
+
+    await fetchStatus()
+    if (serviceOperationNeedsVpnDisconnect()) {
+      setError({
+        ok: false,
+        error_type: 'vpn_session_active',
+        message: operation === 'install'
+          ? 'VPN 连接仍在运行，请先断开连接后再安装辅助服务。'
+          : 'VPN 连接仍在运行，请先断开连接后再卸载辅助服务。',
+        recoverable: true,
+        recommended_action: 'disconnect_first',
+        timestamp: Date.now(),
+      })
+      return false
+    }
+    return true
+  }
+
+  async function installServiceAfterDisconnect() {
+    const ready = await disconnectForServiceOperation('install')
+    if (!ready) return false
+    return installService()
+  }
+
+  async function uninstallServiceAfterDisconnect() {
+    const ready = await disconnectForServiceOperation('uninstall')
+    if (!ready) return false
+    return uninstallService()
+  }
+
+  function requestInstallService(options: { confirmWhenInactive?: boolean } = {}) {
+    const active = activeVpnWorkflow()
+    const message = active
+      ? '安装服务必须先断开连接。继续后 EXV 会先断开当前 VPN 连接，然后安装服务。'
+      : '将安装 VPN 辅助服务。系统可能会请求管理员权限。'
+    if (!active && options.confirmWhenInactive === false) {
+      return installService()
+    }
+    return new Promise<boolean>((resolve) => {
+      ui.requestConfirm(
+        message,
+        () => { void installServiceAfterDisconnect().then(resolve) },
+        {
+          title: '安装辅助服务',
+          confirmLabel: '继续安装',
+          cancelLabel: '取消',
+          variant: 'primary',
+          onCancel: () => resolve(false),
+        },
+      )
+    })
+  }
+
+  function requestUninstallService() {
+    const message = activeVpnWorkflow()
+      ? '卸载服务必须先断开连接。继续后 EXV 会先断开当前 VPN 连接，然后卸载服务。'
+      : '将卸载 VPN 辅助服务。系统可能会请求管理员权限。'
+    return new Promise<boolean>((resolve) => {
+      ui.requestConfirm(
+        message,
+        () => { void uninstallServiceAfterDisconnect().then(resolve) },
+        {
+          title: '卸载辅助服务',
+          confirmLabel: '继续卸载',
+          cancelLabel: '取消',
+          variant: 'destructive',
+          onCancel: () => resolve(false),
+        },
+      )
+    })
   }
 
   function rejectActiveVpnForServiceUninstall() {
@@ -1761,25 +1915,7 @@ export const useVpnStore = defineStore('vpn', () => {
   }
 
   async function disconnectAndUninstallService() {
-    if (status.value?.connected) {
-      const disconnected = currentSessionMode.value === 'elevated'
-        ? await disconnectElevated()
-        : await disconnect()
-      if (!disconnected) return false
-      await fetchStatus()
-      if (status.value?.connected) {
-        setError({
-          ok: false,
-          error_type: 'vpn_session_active',
-          message: 'VPN 连接仍在运行，请先断开连接后再卸载辅助服务。',
-          recoverable: true,
-          recommended_action: 'disconnect_first',
-          timestamp: Date.now(),
-        })
-        return false
-      }
-    }
-    return uninstallService()
+    return uninstallServiceAfterDisconnect()
   }
 
   async function repairService() {
@@ -1871,7 +2007,7 @@ export const useVpnStore = defineStore('vpn', () => {
     fetchStatus, fetchAppShellState, updateStatusFromEvent, connect, disconnect, cancelConnect, connectElevated, disconnectElevated, connectFromDashboard,
     fetchAuthInteraction, respondAuthInteraction,
     fetchRoutes, addRoute, removeRoute, resetRoutes,
-    fetchServiceStatus, fetchCliStatus, installService, uninstallService, disconnectAndUninstallService, repairService, installCli, uninstallCli,
+    fetchServiceStatus, fetchCliStatus, installService, uninstallService, requestInstallService, requestUninstallService, disconnectAndUninstallService, repairService, installCli, uninstallCli,
     addLog, clearLogs, setLogs, addServiceProgress, clearError, retryLastAction,
   }
 })
