@@ -76,19 +76,29 @@ std::string PipeClient::send_request(const std::string& request_line) {
 #ifdef _WIN32
   HANDLE hPipe = static_cast<HANDLE>(handle_);
   DWORD written = 0;
-  if (!WriteFile(hPipe, wire.c_str(), static_cast<DWORD>(wire.size()), &written, nullptr))
+  if (!WriteFile(hPipe, wire.c_str(), static_cast<DWORD>(wire.size()), &written, nullptr)) {
+    disconnect();
     return {};
+  }
   char buf[8192] = {};
   DWORD bytes_read = 0;
-  if (!ReadFile(hPipe, buf, sizeof(buf) - 1, &bytes_read, nullptr) || bytes_read == 0)
+  if (!ReadFile(hPipe, buf, sizeof(buf) - 1, &bytes_read, nullptr) || bytes_read == 0) {
+    disconnect();
     return {};
+  }
   std::string response(buf, bytes_read);
 #else
   int fd = static_cast<int>(reinterpret_cast<intptr_t>(handle_));
-  if (::write(fd, wire.c_str(), wire.size()) <= 0) return {};
+  if (::write(fd, wire.c_str(), wire.size()) <= 0) {
+    disconnect();
+    return {};
+  }
   char buf[8192] = {};
   ssize_t n = ::read(fd, buf, sizeof(buf) - 1);
-  if (n <= 0) return {};
+  if (n <= 0) {
+    disconnect();
+    return {};
+  }
   std::string response(buf, static_cast<size_t>(n));
 #endif
 

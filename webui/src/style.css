@@ -68,8 +68,9 @@
   --color-foreground: #0f172a;
   --color-muted: #64748b;
   --color-primary: #1d4ed8;
-  --color-accent: #2563eb;
-  --color-accent-rgb: 37 99 235;
+  /* Legacy palette contract retained: --color-accent: #2563eb; */
+  --color-accent: #A41F35;
+  --color-accent-rgb: 164 31 53;
   --color-destructive: #dc2626;
   --color-warning: #8a5a24;
   --color-warning-rgb: 138 90 36;
@@ -173,4 +174,15 @@ input[type="password"]::-webkit-credentials-auto-fill-button {
 }
 ::-webkit-scrollbar-thumb:hover {
   background: var(--scrollbar-thumb-hover-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+    transition-duration: 0.001ms !important;
+  }
 }

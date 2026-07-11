@@ -11,6 +11,7 @@
 #include <regex>
 #include <sstream>
 #include <thread>
+#include <utility>
 
 #ifdef _WIN32
 #ifndef WIN32_LEAN_AND_MEAN
@@ -55,6 +56,90 @@ nlohmann::json parse_hello_response(const std::string &response_line) {
   } catch (...) {
   }
   return {};
+}
+
+class ResolverIpcSession {
+public:
+  ResolverIpcSession(const CoreResolverDeps &deps, std::string ipc_path)
+      : deps_(deps), ipc_path_(std::move(ipc_path)) {}
+
+  ~ResolverIpcSession() { close(); }
+
+  bool open() {
+    if (connected_) {
+      return true;
+    }
+
+    if (deps_.open_ipc_session) {
+      session_owned_ = true;
+      connected_ = deps_.open_ipc_session(ipc_path_);
+      return connected_;
+    }
+
+    if (deps_.try_connect_ipc) {
+      session_owned_ = false;
+      connected_ = deps_.try_connect_ipc(ipc_path_);
+      return connected_;
+    }
+
+    return false;
+  }
+
+  std::string send(const std::string &request_line) {
+    if (!connected_) {
+      return {};
+    }
+
+    if (session_owned_) {
+      return deps_.send_ipc_session_request
+                 ? deps_.send_ipc_session_request(request_line)
+                 : std::string();
+    }
+
+    return deps_.send_ipc_request
+               ? deps_.send_ipc_request(ipc_path_, request_line)
+               : std::string();
+  }
+
+  void close() {
+    if (!connected_) {
+      return;
+    }
+
+    if (session_owned_) {
+      if (deps_.close_ipc_session) {
+        deps_.close_ipc_session();
+      }
+    } else if (deps_.disconnect_ipc) {
+      deps_.disconnect_ipc();
+    }
+
+    connected_ = false;
+  }
+
+private:
+  const CoreResolverDeps &deps_;
+  std::string ipc_path_;
+  bool session_owned_ = false;
+  bool connected_ = false;
+};
+
+struct IpcRequestAttempt {
+  bool connected = false;
+  std::string response_line;
+};
+
+IpcRequestAttempt send_request_over_ipc(const CoreResolverDeps &deps,
+                                        const std::string &ipc_path,
+                                        const std::string &request_line) {
+  ResolverIpcSession session(deps, ipc_path);
+  if (!session.open()) {
+    return {};
+  }
+  IpcRequestAttempt attempt;
+  attempt.connected = true;
+  attempt.response_line = session.send(request_line);
+  return attempt;
 }
 
 bool contract_version_accepted(const nlohmann::json &hello_payload) {
@@ -235,14 +320,13 @@ CoreResolveResult resolve_core(const CoreResolveOptions &options,
   exv::observability::LogFacade::info(
       "Core resolver: trying IPC endpoint " + ipc_path);
 
-  if (deps.try_connect_ipc && deps.try_connect_ipc(ipc_path)) {
+  std::string request_line = build_hello_request();
+  auto hello_attempt = send_request_over_ipc(deps, ipc_path, request_line);
+  if (hello_attempt.connected) {
     exv::observability::LogFacade::info(
         "Core resolver: IPC endpoint available, sending core.hello");
 
-    std::string request_line = build_hello_request();
-    std::string response_line =
-        deps.send_ipc_request ? deps.send_ipc_request(ipc_path, request_line)
-                              : std::string();
+    std::string response_line = std::move(hello_attempt.response_line);
 
     if (!response_line.empty()) {
       auto hello_payload = parse_hello_response(response_line);
@@ -289,8 +373,7 @@ CoreResolveResult resolve_core(const CoreResolveOptions &options,
       std::this_thread::sleep_for(
           std::chrono::milliseconds(200));
       response_line =
-          deps.send_ipc_request ? deps.send_ipc_request(ipc_path, request_line)
-                                : std::string();
+          send_request_over_ipc(deps, ipc_path, request_line).response_line;
       if (!response_line.empty()) {
         auto hello_payload = parse_hello_response(response_line);
         if (hello_payload.is_object() && !hello_payload.empty()) {
@@ -413,14 +496,14 @@ CoreResolveResult resolve_core(const CoreResolveOptions &options,
   while (std::chrono::steady_clock::now() < deadline) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
 
-    if (!deps.try_connect_ipc || !deps.try_connect_ipc(ipc_path)) {
+    std::string request_line = build_hello_request();
+    auto launched_hello_attempt =
+        send_request_over_ipc(deps, ipc_path, request_line);
+    if (!launched_hello_attempt.connected) {
       continue;
     }
 
-    std::string request_line = build_hello_request();
-    std::string response_line =
-        deps.send_ipc_request ? deps.send_ipc_request(ipc_path, request_line)
-                              : std::string();
+    std::string response_line = std::move(launched_hello_attempt.response_line);
 
     if (response_line.empty()) {
       continue;

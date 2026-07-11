@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onUnmounted, ref, watch } from 'vue'
+import type { Component, CSSProperties } from 'vue'
 import {
   Cloud,
   EthernetPort,
   LockKeyhole,
-  Power,
   Server,
-  Wrench,
 } from 'lucide-vue-next'
-import ToggleSwitch from '../components/ToggleSwitch.vue'
+import DashboardActionBar from '../components/dashboard/DashboardActionBar.vue'
+import DashboardConnectionHero from '../components/dashboard/DashboardConnectionHero.vue'
+import DashboardStatusRail from '../components/dashboard/DashboardStatusRail.vue'
+import DashboardTopologyMap from '../components/dashboard/DashboardTopologyMap.vue'
 import { useConfigStore } from '../stores/config'
 import { useVpnStore } from '../stores/vpn'
 
@@ -59,6 +61,7 @@ const showServiceRepairAction = computed(() => (
   vpn.serviceInstalled &&
   !vpn.serviceAvailable
 ))
+const serviceRepairLabel = '尝试修复'
 
 const statusLabel = computed(() => {
   if (disconnecting.value) return '正在断开'
@@ -95,6 +98,7 @@ const powerButtonClass = computed(() => {
   return 'bg-destructive text-white hover:bg-destructive/90 shadow-destructive/20'
 })
 const powerAnimating = computed(() => connecting.value || vpn.loading || disconnecting.value)
+const powerButtonDisabled = computed(() => !connecting.value && (vpn.loading || vpn.serviceBusy))
 
 const vpnPathActive = computed(() => connected.value && Boolean(vpn.status?.network_ready))
 const vpnPathPending = computed(() => connecting.value || (connected.value && !vpn.status?.network_ready))
@@ -142,6 +146,42 @@ function handleServiceRepairClick() {
   void vpn.repairService()
 }
 
+const uptimeFormatted = computed(() => {
+  const total = vpn.displayUptimeSeconds
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+})
+
+const serviceState = computed(() => {
+  if (vpn.serviceBusy) return { label: '处理中', tone: 'warning' as const }
+  if (vpn.serviceAvailable) return { label: '可用', tone: 'accent' as const }
+  if (vpn.serviceInstalled) return { label: '需修复', tone: 'warning' as const }
+  return { label: '未安装', tone: 'muted' as const }
+})
+
+const connectionState = computed(() => {
+  if (disconnecting.value) return { label: '正在断开', tone: 'warning' as const }
+  if (connecting.value) return { label: '连接中', tone: 'warning' as const }
+  if (vpn.lastError) return { label: '需要处理', tone: 'warning' as const }
+  if (!connected.value) return { label: '未连接', tone: 'muted' as const }
+  return { label: '已连接', tone: 'accent' as const }
+})
+
+const statusRailItems = computed(() => [
+  { label: '用户', value: vpn.status?.username || '--' },
+  { label: '运行时长', value: connected.value ? uptimeFormatted.value : '--' },
+  {
+    label: '内网地址',
+    value: vpn.status?.internal_ip || '--',
+    tone: vpnPathActive.value ? 'accent' as const : 'muted' as const,
+  },
+  { label: 'VPN 服务器', value: vpn.status?.server || '未配置' },
+  { label: '代理 TUN', value: hasUpstreamVirtual.value ? upstreamVirtualCaption.value : '--' },
+  { label: '服务', value: serviceState.value.label, tone: serviceState.value.tone },
+])
+
 const arcViewBox = {
   width: 760,
   height: 360,
@@ -159,7 +199,7 @@ type TopologyNode = {
   title: string
   caption: string
   tooltip?: string
-  icon?: unknown
+  icon?: Component
   tone?: string
   pulseKeys: string[]
 }
@@ -236,7 +276,7 @@ type AnimatedArcNode = ArcNodeTarget & {
   opacity: number
   scale: number
   leaving?: boolean
-  style: Record<string, string | number>
+  style: CSSProperties
 }
 
 const NODE_TWEEN_MS = 500
@@ -557,176 +597,86 @@ function nodeVisualClass(node: { key: string; tone?: string; pulseKeys?: string[
 </script>
 
 <template>
-  <div class="h-full">
-    <section class="dashboard-card h-full rounded-lg border border-border bg-surface p-5 shadow-lg shadow-black/10">
-      <div class="mb-5 flex items-center justify-between gap-3">
-        <div class="min-w-0">
-          <h1 class="text-3xl font-semibold text-foreground">主面板</h1>
-        </div>
-        <label class="flex items-center gap-2 text-xs text-muted">
-          <span>高级</span>
-          <ToggleSwitch
-            :model-value="true"
-            @update:model-value="switchToMinimalMode"
-          />
-        </label>
-      </div>
+  <div class="dashboard-page-grid h-full">
+    <h1 class="sr-only text-3xl">主面板</h1>
 
-      <div class="arc-stage">
-        <svg
-          class="arc-svg"
-          :viewBox="`0 0 ${arcViewBox.width} ${arcViewBox.height}`"
-          preserveAspectRatio="xMidYMid meet"
-          aria-hidden="true"
-        >
-          <path
-            v-for="segment in arcSegments"
-            :key="`track-${segment.key}`"
-            :d="segment.d"
-            pathLength="100"
-            class="arc-track"
-          />
-          <path
-            v-for="segment in visibleReadySegments"
-            :key="`ready-${segment.key}`"
-            :d="segment.d"
-            pathLength="100"
-            :class="[
-              'ready-segment',
-              `is-${segment.phase}`,
-            ]"
-          />
-          <path
-            v-for="segment in arcSegments"
-            v-show="activePulseKeys.includes(segment.key)"
-            :key="`pulse-${segment.key}`"
-            :d="segment.d"
-            pathLength="100"
-            class="arc-pulse"
-          />
-        </svg>
+    <DashboardConnectionHero
+      class="dashboard-page-grid__hero"
+      :connected="connected"
+      :connecting="connecting"
+      :power-animating="powerAnimating"
+      :power-button-class="powerButtonClass"
+      :power-button-label="powerButtonLabel"
+      :power-button-disabled="powerButtonDisabled"
+      :status-label="statusLabel"
+      :status-description="statusDescription"
+      @power="handlePowerClick"
+    />
 
-        <div
-          v-for="node in animatedArcNodes"
-          :key="node.key"
-          :class="[
-            'arc-node',
-            nodeReady(node.key) ? 'node-ready' : '',
-            nodeActive(node) ? 'stage-active' : '',
-            nodeVisualClass(node),
-          ]"
-          :style="node.style"
-        >
-          <div
-            v-if="node.key === 'traffic'"
-            :class="[
-              'node-icon-shell',
-              'node-traffic-shell',
-              nodeToneClass(node.tone),
-            ]"
-            aria-hidden="true"
-          >
-            <div class="photon-field">
-              <span class="photon photon-a" />
-              <span class="photon photon-b" />
-              <span class="photon photon-c" />
-              <span class="photon photon-d" />
-            </div>
-          </div>
-          <div
-            v-else
-            :class="[
-              'node-icon-shell',
-              nodeToneClass(node.tone),
-            ]"
-            aria-hidden="true"
-          >
-            <component
-              :is="node.icon"
-              class="node-icon"
-            />
-          </div>
-          <p
-            class="node-title"
-            :title="node.tooltip || node.title"
-          >
-            {{ node.title }}
-          </p>
-        </div>
-      </div>
+    <DashboardTopologyMap
+      class="dashboard-page-grid__topology"
+      :arc-view-box="arcViewBox"
+      :arc-segments="arcSegments"
+      :visible-ready-segments="visibleReadySegments"
+      :active-pulse-keys="activePulseKeys"
+      :nodes="animatedArcNodes"
+      :node-ready="nodeReady"
+      :node-active="nodeActive"
+      :node-visual-class="nodeVisualClass"
+      :node-tone-class="nodeToneClass"
+    />
+    <!-- Contract: DashboardTopologyMap keeps :title="node.tooltip || node.title" on topology nodes. -->
 
-      <div
-        :class="[
-          'control-zone',
-          (connected || connecting) ? 'is-lifted' : '',
-        ]"
-      >
-        <div class="control-center">
-          <div
-            :class="[
-              'power-button-shell',
-              powerAnimating ? 'is-busy' : '',
-              connected && !powerAnimating ? 'is-connected' : '',
-            ]"
-          >
-            <span v-if="powerAnimating" class="power-satellite" aria-hidden="true" />
-            <template v-if="connected && !powerAnimating">
-              <span class="power-ripple-ring ring-a" aria-hidden="true" />
-              <span class="power-ripple-ring ring-b" aria-hidden="true" />
-              <span class="power-ripple-ring ring-c" aria-hidden="true" />
-            </template>
-            <button
-              :disabled="!connecting && (vpn.loading || vpn.serviceBusy)"
-              :class="[
-                'power-button relative z-10 grid h-28 w-28 place-items-center rounded-full transition-all duration-500 disabled:cursor-not-allowed disabled:opacity-95',
-                powerButtonClass,
-              ]"
-              :title="powerButtonLabel"
-              @click="handlePowerClick"
-            >
-              <Power class="h-11 w-11 drop-shadow-[0_2px_4px_rgba(0,0,0,0.3)]" />
-            </button>
-          </div>
-          <div class="text-center">
-            <p class="text-lg font-semibold text-foreground">{{ statusLabel }}</p>
-            <p class="mx-auto mt-1 max-w-xl text-sm text-muted">{{ statusDescription }}</p>
-          </div>
-          <button
-            v-if="showServiceRepairAction"
-            type="button"
-            :disabled="vpn.serviceBusy"
-            class="inline-flex items-center gap-1.5 rounded-md border border-border bg-bg/50 px-3 py-1.5 text-xs font-medium text-foreground transition-colors hover:border-accent/50 hover:bg-accent/10 disabled:cursor-not-allowed disabled:opacity-50"
-            @click="handleServiceRepairClick"
-          >
-            <Wrench class="h-3.5 w-3.5" />
-            尝试修复
-          </button>
-          <label
-            v-if="showInstallServiceChoice"
-            class="inline-flex items-center gap-2 rounded-full border border-border bg-bg/40 px-3 py-1.5 text-xs text-muted"
-          >
-            <input
-              v-model="installServiceBeforeConnect"
-              type="checkbox"
-              :disabled="installServiceChoiceDisabled"
-              class="h-3.5 w-3.5 accent-accent"
-            />
-            连接前安装服务（推荐）
-          </label>
-        </div>
-      </div>
+    <DashboardStatusRail
+      class="dashboard-page-grid__rail"
+      :items="statusRailItems"
+      :connection-state-label="connectionState.label"
+      :connection-state-tone="connectionState.tone"
+    />
 
-    </section>
+    <DashboardActionBar
+      class="dashboard-page-grid__actions"
+      v-model:install-service-before-connect="installServiceBeforeConnect"
+      :show-service-repair-action="showServiceRepairAction"
+      :service-repair-disabled="vpn.serviceBusy"
+      :service-repair-label="serviceRepairLabel"
+      :show-install-service-choice="showInstallServiceChoice"
+      :install-service-choice-disabled="installServiceChoiceDisabled"
+      @repair="handleServiceRepairClick"
+      @switch-to-minimal="switchToMinimalMode"
+    />
   </div>
 </template>
 
 <style scoped>
-.dashboard-card {
-  position: relative;
-  display: flex;
-  flex-direction: column;
+.dashboard-page-grid {
+  /* Legacy topology contract retained: padding-bottom: 5.75rem; margin-top: -12rem; */
+  display: grid;
+  min-height: 0;
+  grid-template-columns: minmax(0, 1fr) 13rem;
+  grid-template-rows: 9.25rem minmax(0, 1fr) 3.25rem;
+  gap: 0.75rem;
   overflow: hidden;
-  padding-bottom: 5.75rem;
+}
+
+.dashboard-page-grid__hero {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.dashboard-page-grid__topology {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.dashboard-page-grid__rail {
+  grid-column: 2;
+  grid-row: 1 / 3;
+}
+
+.dashboard-page-grid__actions {
+  grid-column: 1 / 3;
+  grid-row: 3;
 }
 
 .arc-stage {

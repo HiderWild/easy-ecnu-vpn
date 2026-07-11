@@ -291,18 +291,16 @@ function updateSettingField<K extends keyof SettingsConfig>(key: K, value: Setti
 async function toggleService() {
   systemMessage.value = null
   const installed = vpn.serviceInstalled
-  if (vpn.status?.connected && installed) {
-    ui.requestError({
-      title: '请先断开 VPN',
-      message: '卸载 helper 服务前必须先断开当前 VPN 连接。',
-      primaryLabel: '知道了',
-      secondaryLabel: '取消',
-    })
-    return
-  }
-  const ok = installed ? await vpn.uninstallService() : await vpn.installService()
+  const ok = installed ? await vpn.disconnectAndUninstallService() : await vpn.installService()
   if (ok) {
     ui.addToast(installed ? '辅助服务已卸载' : '辅助服务已安装', 'success')
+  } else if (vpn.serviceStatus?.operation_state === 'in_progress') {
+    ui.addToast(installed ? '辅助服务卸载已启动，正在更新状态' : '辅助服务安装已启动，正在更新状态', 'warning')
+  } else if (vpn.serviceStatus?.operation_state === 'warning') {
+    ui.requestError({
+      title: installed ? '辅助服务卸载需确认' : '辅助服务安装需确认',
+      message: vpn.serviceStatus.warning || '请刷新服务状态或查看日志后确认。',
+    })
   }
 }
 

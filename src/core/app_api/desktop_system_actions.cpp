@@ -7,6 +7,7 @@
 #include "core/rpc/desktop_rpc_adapter.hpp"
 #include "core/tunnel_controller/tunnel_controller.hpp"
 #include "core/use_cases/system_status_use_cases.hpp"
+#include "platform/common/process_control.hpp"
 
 #include <utility>
 
@@ -65,9 +66,27 @@ exv::core::UseCaseResult helper_status_with_current_instance() {
 }
 
 exv::core::UseCaseResult install_helper_service_with_current_instance() {
-  // NOTE: install-while-connected handling is rewritten in a follow-up task
-  // (A5). The previous session-handoff chain has been removed; for now the
-  // desktop install delegates to the shared helper maintenance path.
+  auto controller = get_tunnel_controller_if_exists();
+  if (controller) {
+    auto snap = controller->status();
+    if (snap.session_active || snap.network_ready || snap.desired_connected) {
+      controller->disconnect();
+      constexpr int kDisconnectAttempts = 100; // ~10s at 100ms
+      for (int i = 0; i < kDisconnectAttempts; ++i) {
+        snap = controller->status();
+        if (!snap.session_active && !snap.network_ready) {
+          break;
+        }
+        exv::platform::sleep_ms(100);
+      }
+      snap = controller->status();
+      if (snap.session_active || snap.network_ready) {
+        return exv::core::UseCaseResult::fail(
+            "vpn_disconnect_timeout",
+            "断开当前 VPN 会话超时，请稍后重试安装。");
+      }
+    }
+  }
   return make_system_status_use_cases().install_helper();
 }
 

@@ -670,6 +670,8 @@ public:
       closed_ = true;
       pending_.clear();
     }
+    std::lock_guard<std::mutex> client_lock(client_mutex_);
+    client_.disconnect();
     cv_.notify_all();
   }
 
@@ -697,13 +699,27 @@ public:
       pending_.pop_front();
     }
 
-    exv::cli::PipeClient client;
-    if (!client.connect(ipc_path_)) {
-      return false;
+    {
+      std::lock_guard<std::mutex> client_lock(client_mutex_);
+      if (!client_.is_connected() && !client_.connect(ipc_path_)) {
+        return false;
+      }
+      line = client_.send_request(request);
+      if (!line.empty()) {
+        return true;
+      }
+
+      client_.disconnect();
+      if (!client_.connect(ipc_path_)) {
+        return false;
+      }
+      line = client_.send_request(request);
+      if (line.empty()) {
+        client_.disconnect();
+        return false;
+      }
     }
-    line = client.send_request(request);
-    client.disconnect();
-    return !line.empty();
+    return true;
   }
 
   bool read_available_line(std::string &) override { return false; }
@@ -711,8 +727,10 @@ public:
 private:
   std::string ipc_path_;
   std::mutex mutex_;
+  std::mutex client_mutex_;
   std::condition_variable cv_;
   std::deque<std::string> pending_;
+  exv::cli::PipeClient client_;
   bool closed_ = false;
 };
 
@@ -763,7 +781,7 @@ std::unique_ptr<CoreRpcTransport> create_core_process_transport(
 exv::core::lifecycle::CoreResolveResult classify_core_state(
     const exv::core::lifecycle::CoreResolveOptions &options,
     const exv::core::lifecycle::CoreResolverDeps &deps) {
-  auto effective_deps = deps.try_connect_ipc
+  auto effective_deps = (deps.open_ipc_session || deps.try_connect_ipc)
                             ? deps
                             : exv::core::lifecycle::make_platform_core_resolver_deps();
   return exv::core::lifecycle::resolve_core(options, effective_deps);

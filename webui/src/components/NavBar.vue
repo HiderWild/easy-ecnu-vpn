@@ -64,7 +64,7 @@ const sidebarStatusItems = computed(() => [
 
 <template>
   <nav class="absolute inset-y-0 left-0 z-40 flex w-44 flex-col border-r border-border bg-surface/80 backdrop-blur-sm">
-    <div class="flex items-center justify-between gap-3 px-3 py-5">
+    <div class="flex items-center justify-between gap-3 px-3 py-4">
       <div class="min-w-0">
         <button
           class="flex min-w-0 items-center gap-2.5 text-left transition-colors hover:text-accent"
@@ -72,14 +72,14 @@ const sidebarStatusItems = computed(() => [
         >
           <img :src="appIconUrl" alt="" class="h-9 w-9 shrink-0" />
           <span class="min-w-0 leading-tight">
-            <span class="block text-xl font-bold text-foreground">{{ distributionConfig.appName }}</span>
-            <span class="block text-sm font-semibold text-muted">{{ distributionConfig.brandSubtitle }}</span>
+            <span class="block text-lg font-bold text-foreground">{{ distributionConfig.appName }}</span>
+            <span class="block text-xs font-semibold text-muted">{{ distributionConfig.brandSubtitle }}</span>
           </span>
         </button>
       </div>
     </div>
 
-    <div class="min-h-0 flex-1 px-3 pb-5">
+    <div class="min-h-0 flex-1 px-3 pb-4">
       <div class="flex flex-col items-stretch gap-1.5 overflow-y-auto">
         <button
           v-for="item in navItems"
@@ -98,7 +98,7 @@ const sidebarStatusItems = computed(() => [
       </div>
     </div>
 
-    <div class="px-3 pb-4">
+    <div class="px-3 pb-3">
       <div
         :class="[
           'space-y-3',

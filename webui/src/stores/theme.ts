@@ -22,18 +22,18 @@ const DARK_ACCENT_STORAGE_KEY = 'exv:accent-dark'
 export const themeAccentPalettes: Record<ThemeAccentTheme, ThemeAccentOption[]> = {
   light: [
     {
-      key: 'blue',
-      label: '教学蓝',
-      description: '清晰、稳重。',
-      color: '#2563EB',
-      rgb: '37 99 235',
-    },
-    {
       key: 'red',
       label: '校徽红',
       description: '取自 ECNU 校徽主色。',
       color: '#A41F35',
       rgb: '164 31 53',
+    },
+    {
+      key: 'blue',
+      label: '教学蓝',
+      description: '清晰、稳重。',
+      color: '#2563EB',
+      rgb: '37 99 235',
     },
     {
       key: 'cyan',
@@ -82,7 +82,7 @@ function isDarkAccentKey(value: string | null): value is DarkAccentKey {
 
 export const useThemeStore = defineStore('theme', () => {
   const mode = ref<ThemeMode>('system')
-  const lightAccent = ref<LightAccentKey>('blue')
+  const lightAccent = ref<LightAccentKey>('red')
   const darkAccent = ref<DarkAccentKey>('sky')
   const systemDark = ref(true)
   let initialized = false

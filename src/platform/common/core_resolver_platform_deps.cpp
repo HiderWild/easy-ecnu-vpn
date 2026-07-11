@@ -16,6 +16,8 @@
 #include <unistd.h>
 #endif
 
+#include <memory>
+
 namespace exv::core::lifecycle {
 namespace {
 
@@ -122,6 +124,24 @@ bool platform_launch_core(const std::string &core_path,
 
 CoreResolverDeps make_platform_core_resolver_deps() {
   CoreResolverDeps deps;
+  auto ipc_session = std::make_shared<exv::cli::PipeClient>();
+  deps.open_ipc_session = [ipc_session](const std::string &ipc_path) {
+    if (ipc_session->is_connected()) {
+      return true;
+    }
+    return ipc_session->connect(ipc_path);
+  };
+  deps.send_ipc_session_request = [ipc_session](
+                                      const std::string &request_line) {
+    std::string response = ipc_session->send_request(request_line);
+    if (response.empty()) {
+      ipc_session->disconnect();
+    }
+    return response;
+  };
+  deps.close_ipc_session = [ipc_session] {
+    ipc_session->disconnect();
+  };
   deps.try_connect_ipc = platform_try_connect_ipc;
   deps.send_ipc_request = platform_send_ipc_request;
   deps.disconnect_ipc = platform_disconnect_ipc;

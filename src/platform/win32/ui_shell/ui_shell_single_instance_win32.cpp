@@ -6,22 +6,21 @@
 #include <windows.h>
 
 #include <memory>
+#include <sstream>
 #include <string>
 
 namespace exv::ui_shell {
 namespace {
 
-std::wstring single_instance_name(const std::string &suffix) {
-  std::wstring out = L"Local\\ECNU-VPN-UiShell-";
-  for (const unsigned char ch : suffix) {
-    if ((ch >= 'A' && ch <= 'Z') || (ch >= 'a' && ch <= 'z') ||
-        (ch >= '0' && ch <= '9')) {
-      out.push_back(static_cast<wchar_t>(ch));
-    } else {
-      out.push_back(L'_');
-    }
+std::wstring single_instance_name(const std::string &state_dir) {
+  unsigned long long hash = 1469598103934665603ull;
+  for (const unsigned char ch : state_dir) {
+    hash ^= ch;
+    hash *= 1099511628211ull;
   }
-  return out;
+  std::wostringstream out;
+  out << L"Local\\EXV-UiShell-" << std::hex << hash;
+  return out.str();
 }
 
 class Win32UiShellSingleInstance final : public UiShellSingleInstance {

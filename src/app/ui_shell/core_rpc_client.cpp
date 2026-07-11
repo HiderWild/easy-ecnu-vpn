@@ -21,6 +21,7 @@
 #include <charconv>
 #include <future>
 #include <map>
+#include <memory>
 #include <mutex>
 #include <system_error>
 #include <thread>
@@ -368,6 +369,27 @@ CoreRpcEvent parse_core_rpc_event_line(const std::string &line) {
 exv::core::lifecycle::CoreResolverDeps make_pipe_resolver_deps() {
   using namespace exv::core::lifecycle;
   CoreResolverDeps deps;
+  auto ipc_session = std::make_shared<exv::cli::PipeClient>();
+
+  deps.open_ipc_session = [ipc_session](const std::string &ipc_path) {
+    if (ipc_session->is_connected()) {
+      return true;
+    }
+    return ipc_session->connect(ipc_path);
+  };
+
+  deps.send_ipc_session_request = [ipc_session](
+                                      const std::string &request_line) {
+    std::string response = ipc_session->send_request(request_line);
+    if (response.empty()) {
+      ipc_session->disconnect();
+    }
+    return response;
+  };
+
+  deps.close_ipc_session = [ipc_session] {
+    ipc_session->disconnect();
+  };
 
   deps.try_connect_ipc = [](const std::string &ipc_path) {
     return exv::cli::PipeClient::probe(ipc_path);

@@ -85,13 +85,20 @@ export interface ServiceStatus {
   binary_path?: string
   service_state?: number
   warning?: string
+  operation_state?: ServiceOperationOutcome
 }
+
+type ServiceOperationCommand = 'install' | 'uninstall' | 'repair'
+type ServiceOperationOutcome = 'completed' | 'in_progress' | 'warning'
 
 export interface ServiceOperationResult {
   operation?: {
     success?: boolean
     exit_code?: number
     message?: string
+    status?: ServiceOperationOutcome
+    in_progress?: boolean
+    warning?: string
   }
   service_status?: ServiceStatus
   handoff?: unknown
@@ -138,6 +145,8 @@ export type VpnErrorType =
   | 'runtime_missing'
   | 'config_invalid'
   | 'service_missing'
+  | 'service_already_installed'
+  | 'vpn_session_active'
   | 'auth_protocol_mismatch'
   | 'auth_failed'
   | 'auth_rejected'
@@ -215,6 +224,52 @@ function serviceStatusFromOperationResult(data: ServiceStatus | ServiceOperation
     return (data as ServiceOperationResult).service_status as ServiceStatus
   }
   return data as ServiceStatus
+}
+
+function serviceOperationEnvelope(data: ServiceStatus | ServiceOperationResult) {
+  if (data && typeof data === 'object' && 'operation' in data) {
+    return (data as ServiceOperationResult).operation
+  }
+  return undefined
+}
+
+function serviceOperationOutcome(
+  command: ServiceOperationCommand,
+  data: ServiceStatus | ServiceOperationResult,
+  nextStatus: ServiceStatus,
+): ServiceOperationOutcome {
+  const operation = serviceOperationEnvelope(data)
+  if (
+    operation?.status === 'completed' ||
+    operation?.status === 'in_progress' ||
+    operation?.status === 'warning'
+  ) {
+    return operation.status
+  }
+  if (operation?.in_progress) return 'in_progress'
+  if (operation?.success === false || operation?.warning || nextStatus.warning) {
+    return 'warning'
+  }
+  if (command === 'install' || command === 'repair') {
+    return nextStatus.available ? 'completed' : 'in_progress'
+  }
+  return nextStatus.installed ? 'in_progress' : 'completed'
+}
+
+function serviceOperationMessage(
+  command: ServiceOperationCommand,
+  outcome: ServiceOperationOutcome,
+  data: ServiceStatus | ServiceOperationResult,
+  nextStatus: ServiceStatus,
+) {
+  const operation = serviceOperationEnvelope(data)
+  if (operation?.message) return operation.message
+  if (operation?.warning) return operation.warning
+  if (nextStatus.warning) return nextStatus.warning
+  if (outcome === 'warning') return '辅助服务操作返回警告，请刷新状态后确认。'
+  if (command === 'install') return '辅助服务安装已启动，正在等待系统服务状态更新。'
+  if (command === 'uninstall') return '辅助服务卸载已启动，正在等待系统服务状态更新。'
+  return '辅助服务修复已启动，正在等待系统服务状态更新。'
 }
 
 function isElevationCancelledMessage(message: string) {
@@ -391,6 +446,18 @@ const contractErrorMap: Record<string, NativeErrorDescriptor> = {
     error_type: 'helper_unavailable',
     message: 'VPN 助手服务不可用，请启动或重新安装助手后重试。',
     recommended_action: 'reinstall_helper',
+    recoverable: true,
+  },
+  service_already_installed: {
+    error_type: 'service_already_installed',
+    message: '辅助服务已安装，无需重复安装。',
+    recommended_action: 'refresh_service_status',
+    recoverable: true,
+  },
+  vpn_session_active: {
+    error_type: 'vpn_session_active',
+    message: 'VPN 连接仍在运行，请先断开连接后再卸载辅助服务。',
+    recommended_action: 'disconnect_first',
     recoverable: true,
   },
   network_unreachable: {
@@ -1433,10 +1500,9 @@ export const useVpnStore = defineStore('vpn', () => {
     }
   }
 
-  async function disconnect() {
+  async function disconnect(): Promise<boolean> {
     if (connectInFlight.value) {
-      await cancelConnect()
-      return
+      return cancelConnect()
     }
     loading.value = true
     disconnectInFlight.value = true
@@ -1447,8 +1513,10 @@ export const useVpnStore = defineStore('vpn', () => {
       applyStatus(data)
       clearError()
       await fetchAppShellState()
+      return true
     } catch (error) {
       setError(normalizeError(error))
+      return false
     } finally {
       disconnectInFlight.value = false
       loading.value = false
@@ -1540,7 +1608,7 @@ export const useVpnStore = defineStore('vpn', () => {
     await connectElevated()
   }
 
-  async function disconnectElevated() {
+  async function disconnectElevated(): Promise<boolean> {
     loading.value = true
     disconnectInFlight.value = true
     lastActionWasElevatedConnect.value = false
@@ -1551,14 +1619,17 @@ export const useVpnStore = defineStore('vpn', () => {
       })
       if (isVpnError(data)) {
         setError(data)
+        return false
       } else {
         applyStatus(data)
         activeTemporaryBackend.value = null
         clearError()
         await fetchAppShellState()
+        return true
       }
     } catch (error) {
       setError(normalizeError(error))
+      return false
     } finally {
       disconnectInFlight.value = false
       loading.value = false
@@ -1620,6 +1691,24 @@ export const useVpnStore = defineStore('vpn', () => {
     }
   }
 
+  function applyServiceOperationResult(
+    command: ServiceOperationCommand,
+    data: ServiceStatus | ServiceOperationResult,
+  ) {
+    const nextStatus = serviceStatusFromOperationResult(data)
+    serviceStatus.value = nextStatus
+    if (nextStatus.warning || !nextStatus.available) {
+      // The elevated helper may have launched successfully while SCM state is
+      // still converging; classify the result below instead of throwing here.
+    }
+    const outcome = serviceOperationOutcome(command, data, nextStatus)
+    const message = serviceOperationMessage(command, outcome, data, nextStatus)
+    serviceStatus.value = outcome === 'completed'
+      ? { ...nextStatus, operation_state: outcome }
+      : { ...nextStatus, operation_state: outcome, warning: message }
+    return outcome
+  }
+
   async function installService() {
     await showServiceOverlay('install')
     try {
@@ -1630,13 +1719,9 @@ export const useVpnStore = defineStore('vpn', () => {
       lastMutatingAction.value = installService
       try {
         const { data } = await api.post<ServiceStatus | ServiceOperationResult>('/service/install')
-        const nextStatus = serviceStatusFromOperationResult(data)
-        serviceStatus.value = nextStatus
-        if (nextStatus.warning || !nextStatus.available) {
-          throw new Error(nextStatus.warning || 'Helper service is not available after install.')
-        }
+        const outcome = applyServiceOperationResult('install', data)
         await fetchAppShellState()
-        return true
+        return outcome === 'completed'
       } catch (error) {
         setError(normalizeError(error))
         return false
@@ -1660,13 +1745,9 @@ export const useVpnStore = defineStore('vpn', () => {
       lastMutatingAction.value = uninstallService
       try {
         const { data } = await api.post<ServiceStatus | ServiceOperationResult>('/service/uninstall')
-        const nextStatus = serviceStatusFromOperationResult(data)
-        serviceStatus.value = nextStatus
-        if (nextStatus.warning || nextStatus.installed) {
-          throw new Error(nextStatus.warning || 'Helper service is still installed after uninstall.')
-        }
+        const outcome = applyServiceOperationResult('uninstall', data)
         await fetchAppShellState()
-        return true
+        return outcome === 'completed'
       } catch (error) {
         setError(normalizeError(error))
         return false
@@ -1679,6 +1760,28 @@ export const useVpnStore = defineStore('vpn', () => {
     }
   }
 
+  async function disconnectAndUninstallService() {
+    if (status.value?.connected) {
+      const disconnected = currentSessionMode.value === 'elevated'
+        ? await disconnectElevated()
+        : await disconnect()
+      if (!disconnected) return false
+      await fetchStatus()
+      if (status.value?.connected) {
+        setError({
+          ok: false,
+          error_type: 'vpn_session_active',
+          message: 'VPN 连接仍在运行，请先断开连接后再卸载辅助服务。',
+          recoverable: true,
+          recommended_action: 'disconnect_first',
+          timestamp: Date.now(),
+        })
+        return false
+      }
+    }
+    return uninstallService()
+  }
+
   async function repairService() {
     await showServiceOverlay('repair')
     try {
@@ -1689,13 +1792,9 @@ export const useVpnStore = defineStore('vpn', () => {
       lastMutatingAction.value = repairService
       try {
         const { data } = await api.post<ServiceStatus | ServiceOperationResult>('/service/repair')
-        const nextStatus = serviceStatusFromOperationResult(data)
-        serviceStatus.value = nextStatus
-        if (nextStatus.warning || !nextStatus.available) {
-          throw new Error(nextStatus.warning || 'Helper service is not available after repair.')
-        }
+        const outcome = applyServiceOperationResult('repair', data)
         await fetchAppShellState()
-        return true
+        return outcome === 'completed'
       } catch (error) {
         setError(normalizeError(error))
         return false
@@ -1772,7 +1871,7 @@ export const useVpnStore = defineStore('vpn', () => {
     fetchStatus, fetchAppShellState, updateStatusFromEvent, connect, disconnect, cancelConnect, connectElevated, disconnectElevated, connectFromDashboard,
     fetchAuthInteraction, respondAuthInteraction,
     fetchRoutes, addRoute, removeRoute, resetRoutes,
-    fetchServiceStatus, fetchCliStatus, installService, uninstallService, repairService, installCli, uninstallCli,
+    fetchServiceStatus, fetchCliStatus, installService, uninstallService, disconnectAndUninstallService, repairService, installCli, uninstallCli,
     addLog, clearLogs, setLogs, addServiceProgress, clearError, retryLastAction,
   }
 })

@@ -32,6 +32,10 @@ struct CoreResolveResult {
 };
 
 struct CoreResolverDeps {
+  std::function<bool(const std::string &ipc_path)> open_ipc_session;
+  std::function<std::string(const std::string &request_line)>
+      send_ipc_session_request;
+  std::function<void()> close_ipc_session;
   std::function<bool(const std::string &ipc_path)> try_connect_ipc;
   std::function<std::string(const std::string &ipc_path,
                             const std::string &request_line)>

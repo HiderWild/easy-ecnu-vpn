@@ -457,6 +457,13 @@ UseCaseResult SystemStatusUseCases::uninstall_cli() {
 }
 
 UseCaseResult SystemStatusUseCases::install_helper() {
+  exv::platform::ServiceStatusSnapshot snap =
+      exv::platform::current_service_status();
+  if (snap.installed) {
+    return fail_with_payload(
+        "service_already_installed", "Helper service is already installed.",
+        service_status_payload(snap));
+  }
   return run_elevated_service_op("install-service", "service_install_failed",
                                  "Helper service installation failed.",
                                  /*desired_installed=*/true);
