@@ -42,6 +42,12 @@ bool CoreSessionRunner::start(const exv::Config& cfg,
     std::unique_lock<std::mutex> lock(mu_);
 
     if (running_) return false;
+    if (monitor_thread_.joinable()) {
+        lock.unlock();
+        monitor_thread_.join();
+        lock.lock();
+        if (running_) return false;
+    }
 
     // Build VpnEngineConfig from the application Config at the core boundary.
     exv::vpn_engine::VpnEngineConfig engine_config;
@@ -142,6 +148,12 @@ bool CoreSessionRunner::start_from_handshake(
     std::unique_lock<std::mutex> lock(mu_);
 
     if (running_) return false;
+    if (monitor_thread_.joinable()) {
+        lock.unlock();
+        monitor_thread_.join();
+        lock.lock();
+        if (running_) return false;
+    }
     engine_config.auto_reconnect = false;
 
     bridge_ = std::make_unique<EngineEventBridge>(

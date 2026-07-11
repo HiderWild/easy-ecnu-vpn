@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <string>
 #include <vector>
 
@@ -36,8 +37,11 @@ struct TunnelMetadata {
   std::vector<std::string> split_include_routes;
   std::vector<std::string> split_exclude_routes;
   std::vector<std::string> server_bypass_ips;
+  std::string dtls_mode = "auto";
+  std::string active_data_channel = "cstp_tls";
   std::string dtls_state = "disabled";
   std::string dtls_fallback_reason;
+  int dtls_fallback_count = 0;
   std::vector<std::string> dns_servers;
   std::vector<std::string> nbns_servers;
   std::string default_domain;
@@ -57,6 +61,7 @@ struct TunnelMetadata {
   std::string dtls_session_id;
   std::string dtls_cipher_suite;
   std::string dtls12_cipher_suite;
+  std::vector<std::uint8_t> dtls_master_secret;
   std::string content_encoding;
 };
 

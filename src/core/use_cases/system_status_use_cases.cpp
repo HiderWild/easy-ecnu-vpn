@@ -40,13 +40,114 @@ UseCaseResult fail_with_payload(const char *error_code, std::string message,
   return result;
 }
 
-// Build the service-status payload returned by the elevated service ops. Mirrors
-// the {"service_status": {...}} shape the prior helper-daemon path produced, so
-// callers/UI do not need to change how they read the result.
 nlohmann::json service_status_payload(
     const exv::platform::ServiceStatusSnapshot &snapshot) {
   return nlohmann::json{
       {"service_status", exv::platform::service_status_to_json(snapshot)}};
+}
+
+nlohmann::json service_operation_payload(
+    const char *command, const char *status, bool success, std::string message,
+    const exv::platform::ServiceStatusSnapshot &snapshot,
+    nlohmann::json service_start = nlohmann::json::object(),
+    bool connect_can_continue = false) {
+  nlohmann::json operation{
+      {"command", command},
+      {"status", status},
+      {"success", success},
+      {"message", std::move(message)},
+      {"service_installed", snapshot.installed},
+      {"service_available", snapshot.available},
+      {"connect_can_continue", connect_can_continue},
+  };
+  if (service_start.is_object() && !service_start.empty()) {
+    operation["service_start"] = std::move(service_start);
+  }
+  return nlohmann::json{
+      {"operation", operation},
+      {"service_status", exv::platform::service_status_to_json(snapshot)}};
+}
+
+const char *degraded_service_install_message() {
+  return "辅助服务已安装，但系统服务暂时无法启动；可尝试使用一次性助手继续连接。";
+}
+
+std::string service_operation_command(const std::string &subcommand) {
+  if (subcommand == "install-service") {
+    return "install";
+  }
+  if (subcommand == "repair-service") {
+    return "repair";
+  }
+  if (subcommand == "uninstall-service") {
+    return "uninstall";
+  }
+  return subcommand;
+}
+
+std::string service_operation_completed_message(const std::string &command) {
+  if (command == "install") {
+    return "Helper service installation completed.";
+  }
+  if (command == "repair") {
+    return "Helper service repair completed.";
+  }
+  if (command == "uninstall") {
+    return "Helper service uninstallation completed.";
+  }
+  return "Helper service operation completed.";
+}
+
+std::string service_operation_in_progress_message(const std::string &command) {
+  if (command == "install") {
+    return "Helper service installation is still in progress.";
+  }
+  if (command == "repair") {
+    return "Helper service repair is still in progress.";
+  }
+  if (command == "uninstall") {
+    return "Helper service uninstallation is still in progress.";
+  }
+  return "Helper service operation is still in progress.";
+}
+
+nlohmann::json
+service_start_payload(const exv::platform::ServiceStartResult &start) {
+  return nlohmann::json{
+      {"attempted", true},
+      {"accepted", start.accepted},
+      {"code", start.code},
+      {"message", start.message},
+      {"native_code", start.native_code},
+      {"native_message", start.native_message},
+  };
+}
+
+nlohmann::json service_operation_payload_for_state(
+    const std::string &subcommand, bool desired_installed,
+    const exv::platform::ServiceStatusSnapshot &snap,
+    const exv::platform::ServiceStartResult *service_start) {
+  const std::string command = service_operation_command(subcommand);
+  if (desired_installed && snap.installed && snap.available) {
+    return service_operation_payload(
+        command.c_str(), "completed", true,
+        service_operation_completed_message(command), snap);
+  }
+  if (!desired_installed && !snap.installed) {
+    return service_operation_payload(
+        command.c_str(), "completed", true,
+        service_operation_completed_message(command), snap);
+  }
+  if (desired_installed && snap.installed && !snap.available &&
+      service_start != nullptr) {
+    const bool connect_can_continue = true;
+    return service_operation_payload(
+        command.c_str(), "warning", true, degraded_service_install_message(),
+        snap, service_start_payload(*service_start), connect_can_continue);
+  }
+  return service_operation_payload(
+      command.c_str(), "in_progress", false,
+      service_operation_in_progress_message(command), snap);
 }
 
 // Launch an elevated helper process (`exv-helper.exe --<subcommand>`) to perform
@@ -72,10 +173,12 @@ UseCaseResult run_elevated_service_op(const std::string &subcommand,
     exv::platform::ServiceStatusSnapshot snap =
         exv::platform::current_service_status();
     if (desired_installed && snap.installed && snap.available) {
-      return UseCaseResult::ok(service_status_payload(snap));
+      return UseCaseResult::ok(service_operation_payload_for_state(
+          subcommand, desired_installed, snap, nullptr));
     }
     if (!desired_installed && !snap.installed) {
-      return UseCaseResult::ok(service_status_payload(snap));
+      return UseCaseResult::ok(service_operation_payload_for_state(
+          subcommand, desired_installed, snap, nullptr));
     }
     exv::platform::sleep_ms(250);
   }
@@ -83,7 +186,22 @@ UseCaseResult run_elevated_service_op(const std::string &subcommand,
   // non-failure "still in progress" result so the caller can re-check.
   exv::platform::ServiceStatusSnapshot snap =
       exv::platform::current_service_status();
-  return UseCaseResult::ok(service_status_payload(snap));
+  if (desired_installed && snap.installed && snap.available) {
+    return UseCaseResult::ok(service_operation_payload_for_state(
+        subcommand, desired_installed, snap, nullptr));
+  }
+  if (!desired_installed && !snap.installed) {
+    return UseCaseResult::ok(service_operation_payload_for_state(
+        subcommand, desired_installed, snap, nullptr));
+  }
+  if (desired_installed && snap.installed && !snap.available) {
+    exv::platform::ServiceStartResult start =
+        exv::platform::try_start_helper_service();
+    return UseCaseResult::ok(service_operation_payload_for_state(
+        subcommand, desired_installed, snap, &start));
+  }
+  return UseCaseResult::ok(service_operation_payload_for_state(
+      subcommand, desired_installed, snap, nullptr));
 }
 
 std::string env_value(const char *name) {
@@ -335,6 +453,19 @@ nlohmann::json cli_status_json(std::string warning = {}) {
 }
 
 } // namespace
+
+namespace testing {
+
+nlohmann::json service_operation_payload_for_test(
+    const std::string &subcommand, bool desired_installed,
+    const exv::platform::ServiceStatusSnapshot &snapshot,
+    const exv::platform::ServiceStartResult *service_start) {
+  return service_operation_payload_for_state(subcommand, desired_installed,
+                                             snapshot, service_start);
+}
+
+} // namespace testing
+
 SystemStatusUseCases::SystemStatusUseCases()
     : SystemStatusUseCases(exv::platform::get_config_dir()) {}
 
@@ -462,7 +593,9 @@ UseCaseResult SystemStatusUseCases::install_helper() {
   if (snap.installed) {
     return fail_with_payload(
         "service_already_installed", "Helper service is already installed.",
-        service_status_payload(snap));
+        service_operation_payload("install", "completed", false,
+                                  "Helper service is already installed.",
+                                  snap));
   }
   return run_elevated_service_op("install-service", "service_install_failed",
                                  "Helper service installation failed.",

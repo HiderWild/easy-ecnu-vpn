@@ -6,6 +6,7 @@
 #include "app/ui_shell/ui_shell_runtime.hpp"
 #include "app/ui_shell/ui_shell_single_instance.hpp"
 #include "app/ui_shell/ui_window.hpp"
+#include "core/config/config.hpp"
 #include "runtime/runtime_context.hpp"
 
 #include <filesystem>
@@ -87,9 +88,11 @@ int main(int argc, char **argv) {
       options.exv_path,
       options.enable_dev_tools,
   };
-  config.start_hidden = options.start_hidden;
   exv::runtime::bootstrap(options.state_dir);
   config.state_dir = exv::runtime::paths().state_dir;
+  config.start_hidden = options.start_visibility_explicit
+                            ? options.start_hidden
+                            : exv::config::load().silent_startup;
 
   auto single_instance =
       exv::ui_shell::acquire_ui_shell_single_instance(config.state_dir);

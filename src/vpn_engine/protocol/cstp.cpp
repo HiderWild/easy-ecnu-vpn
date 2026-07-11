@@ -7,6 +7,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 namespace exv {
 namespace vpn_engine {
@@ -219,6 +220,34 @@ int hex_value(unsigned char ch) {
   if (ch >= 'A' && ch <= 'F')
     return 10 + ch - 'A';
   return -1;
+}
+
+ValidationResult parse_hex_bytes(std::string_view text,
+                                 std::vector<std::uint8_t> *out,
+                                 std::size_t expected_size) {
+  if (!out)
+    return invalid("cstp_null_out", "hex output pointer is null");
+
+  text = trim_ascii(text);
+  if (text.size() != expected_size * 2) {
+    return invalid("cstp_invalid_dtls_master_secret",
+                   "X-DTLS-Master-Secret has invalid length");
+  }
+
+  std::vector<std::uint8_t> parsed;
+  parsed.reserve(expected_size);
+  for (std::size_t i = 0; i < text.size(); i += 2) {
+    const int hi = hex_value(static_cast<unsigned char>(text[i]));
+    const int lo = hex_value(static_cast<unsigned char>(text[i + 1]));
+    if (hi < 0 || lo < 0) {
+      return invalid("cstp_invalid_dtls_master_secret",
+                     "X-DTLS-Master-Secret contains non-hex bytes");
+    }
+    parsed.push_back(static_cast<std::uint8_t>((hi << 4) | lo));
+  }
+
+  *out = std::move(parsed);
+  return ValidationResult{};
 }
 
 std::string url_decode(std::string_view value) {
@@ -453,6 +482,14 @@ ValidationResult parse_cstp_headers(const HttpResponse &response,
   metadata->dtls_cipher_suite = header_string(response, "X-DTLS-CipherSuite");
   metadata->dtls12_cipher_suite =
       header_string(response, "X-DTLS12-CipherSuite");
+  metadata->dtls_master_secret.clear();
+  if (const std::string *master_secret =
+          response.header_ci("X-DTLS-Master-Secret")) {
+    ValidationResult v =
+        parse_hex_bytes(*master_secret, &metadata->dtls_master_secret, 48);
+    if (!v.ok)
+      return v;
+  }
 
   {
     ValidationResult v =

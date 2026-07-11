@@ -1,8 +1,7 @@
 import { ref, onUnmounted } from 'vue'
-import { useConfigStore } from '../stores/config'
 import { useVpnStore, type LogEntry, type ServiceProgressEntry, type VpnStatus } from '../stores/vpn'
-import { useUiStore } from '../stores/ui'
 import type { QuickStartRequestEvent } from '../types/exv'
+import { showQuickStartOrCredentialFallback } from '../utils/quickStart'
 
 export interface CoreCrashedEvent {
   exitCode: number | null
@@ -16,32 +15,6 @@ export function useSSE() {
   const coreCrashed = ref(false)
   const coreCrashInfo = ref<CoreCrashedEvent | null>(null)
   let unsubscribe: (() => void) | null = null
-
-  function handleQuickStartRequest(data: QuickStartRequestEvent) {
-    const ui = useUiStore()
-    const config = useConfigStore()
-    if (!config.settings.minimal_mode) {
-      return ui.openQuickStart(data)
-    }
-
-    const missingUsername = !config.authConfig.username.trim()
-    const missingPassword = !(
-      config.authConfig.remember_password && config.authConfig.password_stored
-    )
-    if (!missingUsername && !missingPassword) return
-
-    void ui.requestCredentials({
-      missingUsername,
-      missingPassword,
-      username: config.authConfig.username,
-      rememberPassword: data.defaults.remember_password,
-      message: missingUsername && missingPassword
-        ? '请输入用户名和密码'
-        : missingUsername
-          ? '请输入用户名'
-          : '请输入密码',
-    })
-  }
 
   function connect() {
     if (window.exv) {
@@ -71,7 +44,7 @@ export function useSSE() {
         }
 
         if (event.type === 'quick-start-request' && event.data && typeof event.data === 'object') {
-          handleQuickStartRequest(event.data as QuickStartRequestEvent)
+          showQuickStartOrCredentialFallback(event.data as QuickStartRequestEvent)
         }
 
         if (event.type === 'core-crashed' && event.data && typeof event.data === 'object') {

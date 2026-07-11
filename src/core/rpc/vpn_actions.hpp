@@ -37,6 +37,10 @@ public:
 
 private:
     nlohmann::json connect_state_json(const exv::core::VpnConnectJobState& state) const;
+    exv::core::VpnConnectJobOwner& connect_jobs();
+    exv::core::VpnConnectJobState current_connect_job() const;
+    std::shared_ptr<exv::core::TunnelController> controller_for_status() const;
+    std::shared_ptr<exv::core::TunnelController> controller_for_mutation() const;
 
     std::shared_ptr<exv::core::TunnelController> controller_;
     ConnectJobRunner connect_job_runner_;

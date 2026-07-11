@@ -17,6 +17,8 @@ namespace protocol {
 
 namespace {
 
+constexpr const char *kDtlsFallbackState = "attempted_and_fell_back_to_tls";
+
 ValidationResult invalid(std::string code, std::string message) {
   ValidationResult result;
   result.ok = false;
@@ -51,6 +53,10 @@ bool is_retryable_packet_read(const ValidationResult &result) {
 bool is_reconnect_trigger(const ValidationResult &result) {
   return result.code == "transport_closed" ||
          result.code == "rekey_unsupported";
+}
+
+bool is_dtls_data_failure(const ValidationResult &result) {
+  return result.code == "udp_timeout" || result.code.rfind("dtls_", 0) == 0;
 }
 
 bool is_cached_cookie_rejected(const ValidationResult &result) {
@@ -246,10 +252,12 @@ ValidationResult ProtocolSession::run_packet_loop(PacketDevice *device,
     emit_event(events, "transport.closed", "error", failed.message,
                {{"code", failed.code}});
 
+    const bool reconnect_attempts_available =
+        options_.max_reconnects == 0 ||
+        reconnect_attempts_ < options_.max_reconnects;
     const bool can_reconnect =
         is_reconnect_trigger(failed) && options_.auto_reconnect &&
-        reconnect_attempts_ < options_.max_reconnects &&
-        !cancellation_requested(cancel);
+        reconnect_attempts_available && !cancellation_requested(cancel);
 
     if (can_reconnect) {
       ValidationResult reconnected =
@@ -282,6 +290,8 @@ ProtocolSession::run_forwarding(PacketDevice *device, EventSink *events,
   std::mutex reason_mu;
   int reason = 0;
   ValidationResult fatal;
+  std::mutex fallback_mu;
+  bool runtime_dtls_fallback_done = false;
 
   auto set_reason = [&](int new_reason, ValidationResult result) {
     const std::lock_guard<std::mutex> lock(reason_mu);
@@ -291,6 +301,32 @@ ProtocolSession::run_forwarding(PacketDevice *device, EventSink *events,
         fatal = std::move(result);
     }
     stop.store(true);
+  };
+
+  auto fallback_dtls_to_cstp = [&](const ValidationResult &failed) {
+    if (!is_dtls_data_failure(failed))
+      return false;
+
+    const std::string code =
+        failed.code.empty() ? "dtls_runtime_failure" : failed.code;
+    {
+      const std::lock_guard<std::mutex> lock(fallback_mu);
+      if (runtime_dtls_fallback_done)
+        return true;
+      if (!transport_->can_fallback_to_cstp())
+        return false;
+      transport_->fallback_to_cstp("dtls_runtime_failure", code);
+      metadata_.active_data_channel = "cstp_tls";
+      metadata_.dtls_state = kDtlsFallbackState;
+      metadata_.dtls_fallback_reason = code;
+      ++metadata_.dtls_fallback_count;
+      state_.tunnel = metadata_;
+      runtime_dtls_fallback_done = true;
+    }
+    emit_event(events, "dtls.fallback", "warning",
+               "DTLS data channel failed; falling back to CSTP/TLS",
+               {{"code", code}});
+    return true;
   };
 
   // Inbound: drain CSTP frames from the gateway and route them to the device.
@@ -309,6 +345,8 @@ ProtocolSession::run_forwarding(PacketDevice *device, EventSink *events,
       InboundFrame frame;
       ValidationResult received = transport_->receive_frame(&frame);
       if (!received.ok) {
+        if (fallback_dtls_to_cstp(received))
+          continue;
         set_reason(3, received);
         break;
       }
@@ -498,6 +536,8 @@ ProtocolSession::run_forwarding(PacketDevice *device, EventSink *events,
 
     ValidationResult sent = transport_->send_packet(packet);
     if (!sent.ok) {
+      if (fallback_dtls_to_cstp(sent))
+        continue;
       set_reason(3, sent);
       break;
     }

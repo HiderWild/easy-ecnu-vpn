@@ -11,6 +11,7 @@ export type SettingChangeKey =
   | 'auth.user_agent'
   | 'settings.mtu'
   | 'settings.dtls'
+  | 'settings.dtls_mode'
   | 'settings.auto_reconnect'
   | 'settings.retry_limit'
   | 'settings.log_path'
@@ -21,6 +22,9 @@ export type SettingChangeKey =
   | 'settings.include_class_b_private_routes'
   | 'settings.launch_at_login'
   | 'settings.auto_connect_on_launch'
+  | 'settings.silent_startup'
+  | 'settings.connection_state_notifications'
+  | 'settings.minimize_to_tray_on_connect'
 
 interface FieldDescriptor<
   TKey extends SettingChangeKey,
@@ -175,9 +179,40 @@ export const frontendToBackendFieldMap = {
     backendGroup: 'settings',
     backendField: 'auto_connect_on_launch',
   },
+  'settings.silent_startup': {
+    key: 'settings.silent_startup',
+    label: '静默启动',
+    group: 'settings',
+    field: 'silent_startup',
+    backendGroup: 'settings',
+    backendField: 'silent_startup',
+  },
+  'settings.connection_state_notifications': {
+    key: 'settings.connection_state_notifications',
+    label: '连接状态系统通知',
+    group: 'settings',
+    field: 'connection_state_notifications',
+    backendGroup: 'settings',
+    backendField: 'connection_state_notifications',
+  },
 } as const satisfies Record<string, BackendFieldDescriptor>
 
-export const frontendOnlySettingsFields = {} as const
+type FrontendOnlyFieldDescriptor = FieldDescriptor<SettingChangeKey, 'settings', string>
+
+export const frontendOnlySettingsFields = {
+  'settings.dtls_mode': {
+    key: 'settings.dtls_mode',
+    label: 'DTLS 模式',
+    group: 'settings',
+    field: 'dtls_mode',
+  },
+  'settings.minimize_to_tray_on_connect': {
+    key: 'settings.minimize_to_tray_on_connect',
+    label: '连接后缩小到托盘区',
+    group: 'settings',
+    field: 'minimize_to_tray_on_connect',
+  },
+} as const satisfies Record<string, FrontendOnlyFieldDescriptor>
 
 export const settingFieldRegistry = {
   ...frontendToBackendFieldMap,
@@ -188,6 +223,11 @@ export const settingChangeKeys = Object.keys(settingFieldRegistry) as SettingCha
 
 export function formatSettingValue(key: SettingChangeKey, value: unknown) {
   if (key === 'auth.password') return value ? '已输入新密码' : '留空'
+  if (key === 'settings.dtls_mode') {
+    if (value === 'auto') return '自动'
+    if (value === 'enabled') return '开启'
+    if (value === 'disabled') return '关闭'
+  }
   if (typeof value === 'boolean') return value ? '开启' : '关闭'
   const text = value == null ? '' : String(value)
   return text.trim() ? text : '空'

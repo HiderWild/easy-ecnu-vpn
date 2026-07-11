@@ -4,6 +4,7 @@
 #include "vpn_engine/protocol/url.hpp"
 
 #include <exception>
+#include <string>
 #include <utility>
 
 namespace exv {
@@ -25,6 +26,23 @@ ValidationResult cancelled() {
 ValidationResult native_transport_unimplemented() {
   return invalid("native_transport_unimplemented",
                  "Native transport is not available on this platform.");
+}
+
+protocol::DtlsMode dtls_mode_from_config(const VpnEngineConfig &config) {
+  if (config.disable_dtls || config.dtls_mode == "disabled")
+    return protocol::DtlsMode::Disabled;
+  if (config.dtls_mode == "enabled")
+    return protocol::DtlsMode::Enabled;
+  return protocol::DtlsMode::Auto;
+}
+
+std::map<std::string, std::string>
+dtls_event_fields(const TunnelMetadata &metadata) {
+  return {{"mode", metadata.dtls_mode},
+          {"state", metadata.dtls_state},
+          {"active_data_channel", metadata.active_data_channel},
+          {"fallback_reason", metadata.dtls_fallback_reason},
+          {"fallback_count", std::to_string(metadata.dtls_fallback_count)}};
 }
 
 bool make_auth_interaction_event(
@@ -67,9 +85,13 @@ protocol::ProtocolSessionOptions make_protocol_options(
   options.useragent = config.useragent;
   options.auth_group = config.auth_group;
   options.csd_wrapper = config.csd_wrapper;
-  options.disable_dtls = config.disable_dtls;
+  options.dtls_mode = dtls_mode_from_config(config);
+  options.disable_dtls = options.dtls_mode == protocol::DtlsMode::Disabled;
   options.auto_reconnect = config.auto_reconnect;
-  options.max_reconnects = config.auto_reconnect ? 1 : 0;
+  options.max_reconnects = config.auto_reconnect
+                                ? (config.retry_limit < 0 ? 0
+                                                          : config.retry_limit)
+                                : 0;
   options.mtu_fallback =
       (config.mtu >= 576 && config.mtu <= 1500) ? config.mtu : 1290;
   options.auth_interaction_handler = dependencies.auth_interaction_handler;
@@ -170,16 +192,23 @@ ValidationResult NativeHandshakeJob::run(std::stop_token stop,
              {{"interface", metadata.interface_name},
               {"internal_ip", metadata.internal_ip4_address}});
 
-  if (!config_.disable_dtls &&
-      metadata.dtls_state !=
+  emit_event("dtls.policy.decision", "info", "native DTLS policy decided",
+             dtls_event_fields(metadata));
+
+  if (metadata.active_data_channel == "dtls" &&
+      metadata.dtls_state ==
           protocol::dtls_transport_state_to_string(
               protocol::DtlsTransportState::attempted_and_connected)) {
+    emit_event("dtls.connected", "info", "DTLS data channel connected",
+               dtls_event_fields(metadata));
+  } else if (dtls_mode_from_config(config_) != protocol::DtlsMode::Disabled) {
     const std::string message =
         metadata.dtls_fallback_reason.empty()
-            ? "native DTLS backend unavailable; using CSTP/TLS"
+            ? "native DTLS unavailable; using CSTP/TLS"
             : metadata.dtls_fallback_reason;
-    emit_event("dtls.unavailable", "warning", message,
-               {{"code", "dtls_unavailable"}, {"state", metadata.dtls_state}});
+    auto fields = dtls_event_fields(metadata);
+    fields.emplace("code", "dtls_unavailable");
+    emit_event("dtls.unavailable", "warning", message, std::move(fields));
   }
 
   if (out) {

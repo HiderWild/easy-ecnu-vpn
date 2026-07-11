@@ -28,7 +28,10 @@ bool is_log_worthy_event(const std::string& type) {
            type == "auth.challenge_required" ||
            type == "auth.group_required" ||
            type == "csd.required_unsupported" ||
+           type == "dtls.policy.decision" ||
+           type == "dtls.connected" ||
            type == "dtls.unavailable" ||
+           type == "dtls.fallback" ||
            type == "cstp.connected" ||
            type == "cstp.failed" ||
            type == "packet.loop.started" ||

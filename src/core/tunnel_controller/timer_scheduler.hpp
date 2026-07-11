@@ -36,6 +36,11 @@ public:
     /// executing will be discarded.  Callbacks already in-flight will finish.
     void cancel_all();
 
+    /// Cancel pending timers and wait for any in-flight callback to finish.
+    /// If called from the scheduler callback thread, it only clears pending
+    /// timers to avoid waiting on itself.
+    void cancel_all_and_wait();
+
     /// Stop the scheduler worker and discard all pending timers. After this,
     /// schedule() is a no-op. Safe to call more than once.
     void shutdown();
@@ -51,7 +56,9 @@ private:
     std::condition_variable         cv_;
     std::condition_variable         done_cv_;    // notified when a timer fires
     std::thread                     worker_;
+    std::thread::id                 worker_id_;
     bool                            stopped_ = false;
+    std::size_t                     active_callbacks_ = 0;
 
     struct PendingTimer {
         std::chrono::steady_clock::time_point fire_at;

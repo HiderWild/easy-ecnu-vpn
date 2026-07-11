@@ -5,12 +5,14 @@
 #include "helper/common/helper_client.hpp"
 #include "observability/log_facade.hpp"
 #include "platform/common/logging/log_runtime.hpp"
+#include "platform/common/logging/stdout_log_sink.hpp"
 #include "common/diagnostics/log_renderer.hpp"
 #include "core/pipe_ipc.hpp"
 #include "runtime/runtime_context.hpp"
 #include "core/app_api/app_api.hpp"
 #include "core/app_api/desktop_status_presenter.hpp"
 #include "core/app_api/desktop_vpn_actions.hpp"
+#include "core/config/config_manager.hpp"
 #include "core/config/config_initialization.hpp"
 #include "core/rpc/lane_scheduler.hpp"
 #include "core/rpc/core_api_setup.hpp"
@@ -22,6 +24,7 @@
 
 #include <atomic>
 #include <csignal>
+#include <deque>
 #include <iostream>
 #include <chrono>
 #include <functional>
@@ -62,6 +65,11 @@ void set_core_registry_persist_candidate_hook(
 
 } // namespace testing
 
+bool should_inspect_helper_for_registry(
+    const std::optional<TunnelStatusSnapshot>& status) {
+    return status.has_value() && status->core_lease_active;
+}
+
 // ------------------------------------------------------------------
 // Global signal flag — set by SIGTERM/SIGINT handler
 // ------------------------------------------------------------------
@@ -82,11 +90,10 @@ static void log_startup_fatal(const std::string& code,
 // Helper: write a JSON line to stdout (thread-safe)
 // ------------------------------------------------------------------
 
-static std::mutex g_stdout_mutex;
-
 static void write_json_line(const json& obj) {
     std::string line = obj.dump();
-    std::lock_guard<std::mutex> lock(g_stdout_mutex);
+    std::lock_guard<std::mutex> lock(
+        exv::platform::logging::stdout_stream_mutex());
     std::cout << line << '\n' << std::flush;
 }
 
@@ -628,19 +635,34 @@ int core_process_main(const std::string& config_dir,
         }
 
         // Observe the live controller (if one exists) for helper lease state.
+        // Do not send Inspect until the controller has completed the initial
+        // Hello/CoreLease sequence; a one-shot helper requires Hello as the
+        // first request on its only client connection.
         auto live_controller = exv::core::tunnel_use_cases().controller_if_exists();
+        std::optional<TunnelStatusSnapshot> helper_status_for_registry = status;
+        if (live_controller) {
+            auto live_status = live_controller->status();
+            if (!helper_status_for_registry.has_value() ||
+                live_status.core_lease_active) {
+                helper_status_for_registry = live_status;
+            }
+        }
         candidate.helper_core_lease_id.clear();
-        if (auto helper = live_controller
+        if (should_inspect_helper_for_registry(helper_status_for_registry)) {
+            auto helper = live_controller
                 ? live_controller->helper_client_for_maintenance()
                 : nullptr;
-            helper && helper->is_connected()) {
-            try {
-                const auto inspect = helper->inspect(exv::helper::InspectRequest{});
-                if (inspect.core_lease.active) {
-                    candidate.helper_core_lease_id = inspect.core_lease.lease_id;
+            if (helper && helper->is_connected()) {
+                try {
+                    const auto inspect =
+                        helper->inspect(exv::helper::InspectRequest{});
+                    if (inspect.core_lease.active) {
+                        candidate.helper_core_lease_id =
+                            inspect.core_lease.lease_id;
+                    }
+                } catch (...) {
+                    candidate.helper_core_lease_id.clear();
                 }
-            } catch (...) {
-                candidate.helper_core_lease_id.clear();
             }
         }
 
@@ -659,18 +681,90 @@ int core_process_main(const std::string& config_dir,
         return true;
     };
 
-    // The shell controller has no helper and never produces meaningful status
-    // callbacks.  The live controller (owned by tunnel_use_cases) is created
-    // lazily when the desktop API brings up a VPN session.  We install a status
-    // callback on the shell so that registry heartbeat persists at startup; once
-    // the live controller exists, its callbacks flow through the desktop VPN
-    // action handlers which also call into the registry path.
-    shell_controller->set_status_callback([&](const TunnelStatusSnapshot& status) {
-        if (!persist_registry(status)) {
-            exv::observability::LogFacade::warn(
-                "Core process could not refresh the versioned core registry after status update");
+    struct PendingStatusEvent {
+        std::optional<TunnelStatusSnapshot> snapshot;
+    };
+
+    const bool status_events_enabled = use_stdin;
+    std::mutex status_event_mutex;
+    std::deque<PendingStatusEvent> pending_status_events;
+    auto enqueue_status_event = [&](PendingStatusEvent event) {
+        if (!status_events_enabled) {
+            return;
         }
-    });
+        std::lock_guard<std::mutex> lock(status_event_mutex);
+        pending_status_events.push_back(std::move(event));
+    };
+
+    auto load_status_config = [&]() {
+        exv::config::ConfigManager mgr(exv::platform::get_config_dir());
+        return mgr.load();
+    };
+
+    auto make_status_event_from_snapshot =
+        [&](const TunnelStatusSnapshot& snapshot) {
+            auto cfg = load_status_config();
+            auto status =
+                exv::app_api::frontend_status_from_controller_snapshot(
+                    snapshot, cfg);
+            exv::app_api::apply_desktop_connect_job_status(&status, true);
+            exv::app_api::apply_desktop_connect_error(&status);
+            return status;
+        };
+
+    auto make_status_event_from_latest_runtime = [&]() {
+        if (auto controller =
+                exv::core::tunnel_use_cases().controller_if_exists();
+            controller) {
+            return make_status_event_from_snapshot(controller->status());
+        }
+        if (auto latest = exv::core::tunnel_use_cases().latest_status();
+            latest.has_value()) {
+            return make_status_event_from_snapshot(*latest);
+        }
+        auto cfg = load_status_config();
+        auto status = exv::app_api::disconnected_status(cfg);
+        exv::app_api::apply_desktop_connect_job_status(&status, false);
+        exv::app_api::apply_desktop_connect_error(&status);
+        return status;
+    };
+
+    auto status_observer_id =
+        exv::core::tunnel_use_cases().add_status_observer(
+            [&](const TunnelStatusSnapshot& status) {
+                if (!persist_registry(status)) {
+                    exv::observability::LogFacade::warn(
+                        "Core process could not refresh the versioned core registry after status update");
+                }
+                enqueue_status_event(PendingStatusEvent{status});
+            });
+
+    auto connect_job_observer_id =
+        exv::core::tunnel_use_cases().add_connect_job_observer(
+            [&](const exv::core::VpnConnectJobState&) {
+                enqueue_status_event(PendingStatusEvent{std::nullopt});
+            });
+
+    struct TunnelUseCaseObserverGuard {
+        exv::core::TunnelUseCases::StatusObserverId status_id = 0;
+        exv::core::TunnelUseCases::ConnectJobObserverId connect_job_id = 0;
+
+        ~TunnelUseCaseObserverGuard() {
+            reset();
+        }
+
+        void reset() {
+            if (status_id != 0) {
+                exv::core::tunnel_use_cases().remove_status_observer(status_id);
+                status_id = 0;
+            }
+            if (connect_job_id != 0) {
+                exv::core::tunnel_use_cases().remove_connect_job_observer(
+                    connect_job_id);
+                connect_job_id = 0;
+            }
+        }
+    } use_case_observers{status_observer_id, connect_job_observer_id};
 
     if (!persist_registry(shell_controller->status())) {
         log_startup_fatal(
@@ -729,12 +823,34 @@ int core_process_main(const std::string& config_dir,
                     break;
                 }
 
-                auto events =
+                std::deque<PendingStatusEvent> pending_events;
+                {
+                    std::lock_guard<std::mutex> lock(status_event_mutex);
+                    pending_events.swap(pending_status_events);
+                }
+
+                for (const auto& pending : pending_events) {
+                    try {
+                        const auto status =
+                            pending.snapshot.has_value()
+                                ? make_status_event_from_snapshot(
+                                      *pending.snapshot)
+                                : make_status_event_from_latest_runtime();
+                        write_json_line(json{{"event", "status"},
+                                             {"data", status}});
+                    } catch (const std::exception& e) {
+                        exv::observability::LogFacade::warn(
+                            std::string("Core process could not build live status event: ") +
+                            e.what());
+                    }
+                }
+
+                auto virtual_network_events =
                     exv::app_api::drain_virtual_network_status_events();
-                if (events.empty()) {
+                if (pending_events.empty() && virtual_network_events.empty()) {
                     continue;
                 }
-                for (const auto& event : events) {
+                for (const auto& event : virtual_network_events) {
                     write_json_line(json{{"event", "status"},
                                          {"data", event}});
                 }
@@ -803,7 +919,7 @@ int core_process_main(const std::string& config_dir,
     }
 
     registry_worker_stop.store(true);
-    shell_controller->set_status_callback({});
+    use_case_observers.reset();
     if (registry_worker.joinable()) {
         registry_worker.join();
     }

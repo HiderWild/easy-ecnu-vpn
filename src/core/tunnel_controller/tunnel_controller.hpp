@@ -1,4 +1,5 @@
 #pragma once
+#include <cstdint>
 #include <functional>
 #include <memory>
 #include <optional>
@@ -21,6 +22,13 @@ struct VpnEngineConfig;
 namespace exv::core {
 
 class TunnelControllerTestAccess;
+
+struct TunnelRecoveryRequest {
+    std::uint64_t runtime_epoch = 0;
+    std::uint64_t controller_id = 0;
+    std::string reason;
+    ErrorInfo error;
+};
 
 class TunnelController {
 public:
@@ -46,6 +54,8 @@ public:
     void set_prepared_native_handshake(
         exv::vpn_engine::VpnEngineConfig engine_config,
         exv::vpn_engine::NativeHandshakeResult handshake);
+    void set_runtime_identity(std::uint64_t runtime_epoch,
+                              std::uint64_t controller_id);
 
     // User intent interface
     void connect(UserIntent intent);
@@ -62,6 +72,11 @@ public:
 
     // Event processing (called by engine/platform callbacks)
     void on_event(TunnelEvent event);
+
+    // Recovery requests are reported to the use-case coordinator. The
+    // controller must not start a second global connect workflow by itself.
+    using RecoveryCallback = std::function<void(const TunnelRecoveryRequest&)>;
+    void set_recovery_callback(RecoveryCallback cb);
 
     // Status change callback
     using StatusCallback = std::function<void(const TunnelStatusSnapshot&)>;

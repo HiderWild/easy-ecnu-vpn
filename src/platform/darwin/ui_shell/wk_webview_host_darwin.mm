@@ -202,6 +202,7 @@ NSString *bridge_script() {
       setMode: (mode, request) => rpc('window.resizeForMode', { mode, request }),
       resizeForMode: (mode, request) => rpc('window.resizeForMode', { mode, request }),
       minimize: () => rpc('window.minimize'),
+      hideToTray: () => rpc('window.hideToTray'),
       requestClose: () => rpc('window.requestClose'),
       getClosePreference: () => Promise.resolve({ action: null }),
       setClosePreference: (action) => Promise.resolve({ ok: true, action }),
@@ -259,6 +260,11 @@ bool wkwebview_should_create_status_item_on_start() {
 std::vector<WkWebViewStatusMenuItem>
 wkwebview_status_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
   std::vector<WkWebViewStatusMenuItem> items;
+  if (!snapshot.connected) {
+    items.push_back({"显示主界面", kStatusCommandShow, false, true});
+    items.push_back({"退出", kStatusCommandQuit, false, true});
+    return items;
+  }
   for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
            snapshot)) {
     items.push_back({label, 0, false, false});
@@ -266,7 +272,7 @@ wkwebview_status_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
   items.push_back({"", 0, true, false});
   items.push_back({"断开连接", kStatusCommandDisconnect, false,
                    snapshot.connected});
-  items.push_back({"显示 EXV", kStatusCommandShow, false, true});
+  items.push_back({"显示主界面", kStatusCommandShow, false, true});
   items.push_back({"", 0, true, false});
   items.push_back({"退出", kStatusCommandQuit, false, true});
   return items;
@@ -515,6 +521,13 @@ public:
         post_bridge_success(id, data);
         return;
       }
+      if (action == "window.hideToTray") {
+        hide_to_status_item();
+        nlohmann::ordered_json data;
+        data["ok"] = true;
+        post_bridge_success(id, data);
+        return;
+      }
       if (action == "window.resolveClosePrompt") {
         apply_close_resolution(
             exv::ui_shell::parse_close_prompt_resolution(request_json));
@@ -570,6 +583,12 @@ public:
     [[NSApplication sharedApplication] activateIgnoringOtherApps:YES];
   }
 
+  void hide_to_status_item() {
+    if (window_ != nil) {
+      [window_ orderOut:nil];
+    }
+  }
+
   void disconnect_from_status_item() {
     if (active_config_.disconnect_vpn_in_background) {
       active_config_.disconnect_vpn_in_background();
@@ -611,9 +630,7 @@ public:
     }
 
     if (resolution.action == "tray") {
-      if (window_ != nil) {
-        [window_ orderOut:nil];
-      }
+      hide_to_status_item();
     } else if (resolution.action == "quit") {
       quit_from_status_item();
     } else if (resolution.action == "smart") {
@@ -635,9 +652,7 @@ public:
         }
       }
       if (connected) {
-        if (window_ != nil) {
-          [window_ orderOut:nil];
-        }
+        hide_to_status_item();
       } else {
         quit_from_status_item();
       }

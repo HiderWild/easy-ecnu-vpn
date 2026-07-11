@@ -5,13 +5,36 @@
 #include "platform/common/runtime_paths.hpp"
 #include "core/rpc/vpn_actions.hpp"
 #include <nlohmann/json.hpp>
+#include "core/tunnel_controller/connect_progress_json.hpp"
 #include "core/tunnel_controller/tunnel_controller.hpp"
 #include "core/config/config_manager.hpp"
+#include "core/use_cases/tunnel_use_cases.hpp"
 #include "runtime/runtime_context.hpp"
 
 using json = nlohmann::json;
 
 namespace exv::core_api {
+
+namespace {
+
+bool connect_progress_is_inactive(
+    const exv::core::ConnectProgress& progress) {
+    if (!progress.active_key.empty()) {
+        return false;
+    }
+    for (const auto& step : progress.steps) {
+        if (step.state != exv::core::ConnectProgressStepState::Pending) {
+            return false;
+        }
+    }
+    return true;
+}
+
+bool active_connect_job(const exv::core::VpnConnectJobState& job) {
+    return job.active && job.desired_connected;
+}
+
+} // namespace
 
 VpnActions::VpnActions(std::shared_ptr<exv::core::TunnelController> controller)
     : controller_(std::move(controller)) {}
@@ -56,7 +79,14 @@ RpcResponse VpnActions::connect(const RpcRequest& req) {
                                payload["password"].is_string() &&
                                !payload["password"].get<std::string>().empty();
 
-        auto state = connect_jobs_.submit_connect(
+        if (!connect_job_runner_ &&
+            (exv::core::tunnel_use_cases().current_runtime_is_connected() ||
+             exv::core::tunnel_use_cases()
+                 .current_runtime_is_connecting_or_recovering())) {
+            return status(req);
+        }
+
+        auto state = connect_jobs().submit_connect(
             pending,
             [this, intent](std::stop_token stop, std::uint64_t epoch) mutable {
                 if (connect_job_runner_) {
@@ -66,7 +96,9 @@ RpcResponse VpnActions::connect(const RpcRequest& req) {
                 if (stop.stop_requested()) {
                     return;
                 }
-                controller_->connect(intent);
+                if (auto controller = controller_for_mutation(); controller) {
+                    controller->connect(intent);
+                }
             });
         resp.success = true;
         resp.payload_json = connect_state_json(state).dump();
@@ -80,27 +112,39 @@ RpcResponse VpnActions::connect(const RpcRequest& req) {
 
 RpcResponse VpnActions::disconnect(const RpcRequest& req) {
     RpcResponse resp;
-    auto active = connect_jobs_.snapshot();
+    auto active = connect_jobs().snapshot();
     if (active.active) {
         auto state =
-            connect_jobs_.submit_disconnect("user_cancelled_connect");
+            connect_jobs().submit_disconnect("user_cancelled_connect");
         resp.success = true;
         resp.payload_json = connect_state_json(state).dump();
         return resp;
     }
-    controller_->disconnect();
+    if (auto controller = controller_for_mutation(); controller) {
+        controller->disconnect();
+    }
     resp.success = true;
-    resp.payload_json = json{{"status", "disconnecting"}}.dump();
+    resp.payload_json = json{{"status", active.active ? "disconnecting" : "idle"}}.dump();
     return resp;
 }
 
 RpcResponse VpnActions::status(const RpcRequest& req) {
     RpcResponse resp;
-    auto s = controller_->status();
+    auto controller = controller_for_status();
+    auto s = controller ? controller->status() : exv::core::TunnelStatusSnapshot{};
+    const auto job = current_connect_job();
+    const bool use_job_overlay =
+        active_connect_job(job) && connect_progress_is_inactive(s.connect_progress);
+    const auto& progress =
+        use_job_overlay ? job.connect_progress : s.connect_progress;
+    const std::string phase =
+        use_job_overlay
+            ? (job.phase.empty() ? std::string("connecting") : job.phase)
+            : std::string(exv::core::tunnel_phase_wire_name(s.phase));
 
     json result = {
-        {"phase", exv::core::tunnel_phase_wire_name(s.phase)},
-        {"desired_connected", s.desired_connected},
+        {"phase", phase},
+        {"desired_connected", use_job_overlay ? true : s.desired_connected},
         {"auto_reconnect", s.auto_reconnect},
         {"helper_mode", s.helper_mode},
         {"helper_status", s.helper_status},
@@ -110,8 +154,18 @@ RpcResponse VpnActions::status(const RpcRequest& req) {
         {"network_ready", s.network_ready},
         {"server", s.server},
         {"interface_name", s.interface_name},
-        {"internal_ip", s.internal_ip}
+        {"internal_ip", s.internal_ip},
+        {"dtls_mode", s.dtls_mode},
+        {"active_data_channel", s.active_data_channel},
+        {"dtls_state", s.dtls_state},
+        {"dtls_fallback_reason", s.dtls_fallback_reason},
+        {"dtls_fallback_count", s.dtls_fallback_count},
+        {"connect_progress", exv::core::connect_progress_to_json(progress)}
     };
+    if (use_job_overlay) {
+        result["connect_job_id"] = job.job_id;
+        result["connect_intent_epoch"] = job.intent_epoch;
+    }
 
     if (s.last_error.has_value()) {
         auto& err = s.last_error.value();
@@ -147,7 +201,14 @@ RpcResponse VpnActions::set_auto_reconnect(const RpcRequest& req) {
     try {
         auto payload = json::parse(req.payload_json);
         bool enabled = payload.at("enabled").get<bool>();
-        controller_->set_auto_reconnect(enabled);
+        auto controller = controller_for_mutation();
+        if (!controller) {
+            resp.success = false;
+            resp.error_code = "invalid_state";
+            resp.error_message = "No live VPN controller is available.";
+            return resp;
+        }
+        controller->set_auto_reconnect(enabled);
         resp.success = true;
         resp.payload_json = json{{"auto_reconnect", enabled}}.dump();
     } catch (const std::exception& e) {
@@ -169,19 +230,43 @@ RpcResponse VpnActions::get_legacy_status(const RpcRequest& req) {
             cfg = exv::Config{};
         }
 
-        auto snap = controller_ ? controller_->status() : exv::core::TunnelStatusSnapshot{};
+        auto controller = controller_for_status();
+        auto snap = controller ? controller->status() : exv::core::TunnelStatusSnapshot{};
+        const auto job = current_connect_job();
+        const bool use_job_overlay =
+            active_connect_job(job) &&
+            connect_progress_is_inactive(snap.connect_progress);
+        const std::string phase =
+            use_job_overlay
+                ? (job.phase.empty() ? std::string("connecting") : job.phase)
+                : std::string(exv::core::tunnel_phase_wire_name(snap.phase));
 
         json result;
-        result["phase"] = exv::core::tunnel_phase_wire_name(snap.phase);
-        result["connected"] = snap.phase == exv::core::TunnelPhase::Connected;
-        result["process_running"] = snap.phase != exv::core::TunnelPhase::Idle &&
-                                    snap.phase != exv::core::TunnelPhase::Failed;
+        result["phase"] = phase;
+        result["connected"] =
+            !use_job_overlay && snap.phase == exv::core::TunnelPhase::Connected;
+        result["process_running"] =
+            use_job_overlay ||
+            (snap.phase != exv::core::TunnelPhase::Idle &&
+             snap.phase != exv::core::TunnelPhase::Failed);
         result["auto_reconnect"] = snap.auto_reconnect;
         result["server"] = !snap.server.empty() ? snap.server : cfg.server;
         result["username"] = cfg.username;
         result["interface"] = snap.interface_name;
         result["internal_ip"] = snap.internal_ip;
-        result["network_ready"] = snap.network_ready;
+        result["dtls_mode"] = snap.dtls_mode;
+        result["active_data_channel"] = snap.active_data_channel;
+        result["dtls_state"] = snap.dtls_state;
+        result["dtls_fallback_reason"] = snap.dtls_fallback_reason;
+        result["dtls_fallback_count"] = snap.dtls_fallback_count;
+        result["network_ready"] = use_job_overlay ? false : snap.network_ready;
+        result["connect_progress"] = exv::core::connect_progress_to_json(
+            use_job_overlay ? job.connect_progress : snap.connect_progress);
+        if (use_job_overlay) {
+            result["connect_job_id"] = job.job_id;
+            result["connect_intent_epoch"] = job.intent_epoch;
+            result["connect_cancelling"] = job.cancelling;
+        }
 
         if (snap.last_error.has_value()) {
             const auto& err = snap.last_error.value();
@@ -210,6 +295,40 @@ RpcResponse VpnActions::get_legacy_status(const RpcRequest& req) {
     return resp;
 }
 
+exv::core::VpnConnectJobOwner& VpnActions::connect_jobs() {
+    if (connect_job_runner_) {
+        return connect_jobs_;
+    }
+    return exv::core::tunnel_use_cases().connect_jobs();
+}
+
+exv::core::VpnConnectJobState VpnActions::current_connect_job() const {
+    if (connect_job_runner_) {
+        return connect_jobs_.snapshot();
+    }
+    return exv::core::tunnel_use_cases().connect_jobs().snapshot();
+}
+
+std::shared_ptr<exv::core::TunnelController>
+VpnActions::controller_for_status() const {
+    if (auto live_controller =
+            exv::core::tunnel_use_cases().controller_if_exists();
+        live_controller) {
+        return live_controller;
+    }
+    return controller_;
+}
+
+std::shared_ptr<exv::core::TunnelController>
+VpnActions::controller_for_mutation() const {
+    if (auto live_controller =
+            exv::core::tunnel_use_cases().controller_if_exists();
+        live_controller) {
+        return live_controller;
+    }
+    return controller_;
+}
+
 nlohmann::json VpnActions::connect_state_json(
     const exv::core::VpnConnectJobState& state) const {
     nlohmann::json out;
@@ -223,6 +342,8 @@ nlohmann::json VpnActions::connect_state_json(
     out["user_cancelled"] = state.user_cancelled;
     out["desired_connected"] = state.desired_connected;
     out["intent_epoch"] = state.intent_epoch;
+    out["connect_progress"] =
+        exv::core::connect_progress_to_json(state.connect_progress);
     if (!state.last_error_code.empty()) {
         out["last_error"] = {
             {"code", state.last_error_code},

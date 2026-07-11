@@ -479,8 +479,9 @@ public:
     start_host_bridge_worker();
 
     running_ = true;
-    ShowWindow(hwnd_, active_config_.start_hidden ? SW_HIDE : SW_SHOWNORMAL);
-    if (!active_config_.start_hidden) {
+    desired_window_visible_ = !active_config_.start_hidden;
+    ShowWindow(hwnd_, desired_window_visible_ ? SW_SHOWNORMAL : SW_HIDE);
+    if (desired_window_visible_) {
       ensure_window_on_visible_work_area();
       UpdateWindow(hwnd_);
     }
@@ -621,6 +622,7 @@ public:
     }
 
     controller_.copy_from(controller);
+    apply_webview_controller_visibility();
     ICoreWebView2 *raw_webview = nullptr;
     if (FAILED(controller_->get_CoreWebView2(&raw_webview)) || !raw_webview) {
       fail_and_close(L"Unable to access the WebView2 instance.");
@@ -642,6 +644,7 @@ public:
     }
     configure_non_client_region_support();
     configure_fixed_zoom_behavior();
+    configure_browser_accelerator_keys();
 
     resize_webview();
     if (!configure_packaged_renderer_origin()) {
@@ -771,6 +774,13 @@ public:
         post_bridge_success(id, data);
         return S_OK;
       }
+      if (action == "window.hideToTray") {
+        hide_to_tray();
+        nlohmann::ordered_json data;
+        data["ok"] = true;
+        post_bridge_success(id, data);
+        return S_OK;
+      }
       if (action == "window.startDrag") {
         std::optional<RendererDragStart> renderer_start;
         if (parsed.contains("payload") && parsed["payload"].is_object()) {
@@ -822,6 +832,24 @@ public:
                             "Unable to open the URL in the default browser.");
           return S_OK;
         }
+        nlohmann::ordered_json data;
+        data["ok"] = true;
+        post_bridge_success(id, data);
+        return S_OK;
+      }
+      if (action == "shell.notify") {
+        std::string title = "EXV";
+        std::string body;
+        if (parsed.contains("payload") && parsed["payload"].is_object()) {
+          const auto &payload = parsed["payload"];
+          if (payload.contains("title") && payload["title"].is_string()) {
+            title = payload["title"].get<std::string>();
+          }
+          if (payload.contains("body") && payload["body"].is_string()) {
+            body = payload["body"].get<std::string>();
+          }
+        }
+        show_tray_notification(title, body);
         nlohmann::ordered_json data;
         data["ok"] = true;
         post_bridge_success(id, data);
@@ -980,6 +1008,12 @@ public:
     controller_->put_Bounds(bounds);
   }
 
+  void apply_webview_controller_visibility() {
+    if (controller_) {
+      controller_->put_IsVisible(desired_window_visible_ ? TRUE : FALSE);
+    }
+  }
+
   void apply_rounded_window_region() {
     if (!hwnd_) {
       return;
@@ -1099,6 +1133,8 @@ public:
     if (!hwnd_) {
       return;
     }
+    desired_window_visible_ = true;
+    apply_webview_controller_visibility();
     clear_window_control_state();
     if (IsIconic(hwnd_)) {
       ShowWindow(hwnd_, SW_RESTORE);
@@ -1218,9 +1254,35 @@ public:
   }
 
   void hide_to_tray() {
+    desired_window_visible_ = false;
+    apply_webview_controller_visibility();
     if (hwnd_) {
       ShowWindow(hwnd_, SW_HIDE);
     }
+  }
+
+  void show_tray_notification(const std::string &title,
+                              const std::string &body) {
+    if (!tray_icon_added_) {
+      create_tray_icon();
+    }
+    if (!tray_icon_added_) {
+      return;
+    }
+
+    NOTIFYICONDATAW notification = tray_icon_;
+    notification.uFlags = NIF_INFO;
+    notification.dwInfoFlags = NIIF_INFO;
+    const std::wstring wide_title = wide_from_utf8(title.empty() ? "EXV" : title);
+    const std::wstring wide_body = wide_from_utf8(body);
+    wcsncpy_s(notification.szInfoTitle,
+              sizeof(notification.szInfoTitle) /
+                  sizeof(notification.szInfoTitle[0]),
+              wide_title.c_str(), _TRUNCATE);
+    wcsncpy_s(notification.szInfo,
+              sizeof(notification.szInfo) / sizeof(notification.szInfo[0]),
+              wide_body.c_str(), _TRUNCATE);
+    Shell_NotifyIconW(NIM_MODIFY, &notification);
   }
 
   void request_close_decision() {
@@ -1693,6 +1755,27 @@ private:
     settings->put_IsZoomControlEnabled(FALSE);
   }
 
+  void configure_browser_accelerator_keys() {
+    if (!webview_) {
+      return;
+    }
+
+    ICoreWebView2Settings *raw_settings = nullptr;
+    if (FAILED(webview_->get_Settings(&raw_settings)) || !raw_settings) {
+      return;
+    }
+
+    ComPtr<ICoreWebView2Settings> settings;
+    settings.attach(raw_settings);
+    ComPtr<ICoreWebView2Settings3> settings3;
+    const HRESULT settings3_result = settings->QueryInterface(
+        IID_ICoreWebView2Settings3,
+        reinterpret_cast<void **>(settings3.put()));
+    if (SUCCEEDED(settings3_result) && settings3) {
+      settings3->put_AreBrowserAcceleratorKeysEnabled(FALSE);
+    }
+  }
+
   bool configure_packaged_renderer_origin() {
     if (active_config_.renderer.kind ==
         exv::ui_shell::RendererAssetKind::DevServer) {
@@ -1871,6 +1954,7 @@ private:
       setMode: (mode, request) => rpc('window.resizeForMode', { mode, request }),
       resizeForMode: (mode, request) => rpc('window.resizeForMode', { mode, request }),
       minimize: () => rpc('window.minimize'),
+      hideToTray: () => rpc('window.hideToTray'),
       requestClose: () => rpc('window.requestClose'),
       getClosePreference: () => rpc('window.getClosePreference'),
       setClosePreference: (action) => rpc('window.setClosePreference', { action }),
@@ -1880,6 +1964,7 @@ private:
     },
     shell: {
       openExternal: (url) => rpc('shell.openExternal', { url }),
+      notify: (payload) => rpc('shell.notify', payload ?? {}),
     },
     modal: {
       serviceInstallPrompt: () => Promise.resolve('dismiss'),
@@ -2120,6 +2205,7 @@ private:
   bool force_quit_ = false;
   bool close_prompt_pending_ = false;
   bool smart_close_pending_ = false;
+  bool desired_window_visible_ = false;
   bool tracking_non_client_mouse_leave_ = false;
   LRESULT active_window_control_hit_ = HTCLIENT;
   LRESULT window_control_state_hit_ = HTCLIENT;
@@ -2250,6 +2336,11 @@ std::wstring webview2_taskbar_created_message_name() {
 std::vector<WebView2TrayMenuItem>
 webview2_tray_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
   std::vector<WebView2TrayMenuItem> items;
+  if (!snapshot.connected) {
+    items.push_back({L"显示主界面", kTrayCommandShow, false, true});
+    items.push_back({L"退出", kTrayCommandQuit, false, true});
+    return items;
+  }
   for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
            snapshot)) {
     items.push_back({wide_from_utf8(label), 0, false, false});
@@ -2257,7 +2348,7 @@ webview2_tray_menu_model(const exv::ui_shell::TrayStatusSnapshot &snapshot) {
   items.push_back({L"", 0, true, false});
   items.push_back({L"断开连接", kTrayCommandDisconnect, false,
                    snapshot.connected});
-  items.push_back({L"显示 EXV", kTrayCommandShow, false, true});
+  items.push_back({L"显示主界面", kTrayCommandShow, false, true});
   items.push_back({L"", 0, true, false});
   items.push_back({L"退出", kTrayCommandQuit, false, true});
   return items;

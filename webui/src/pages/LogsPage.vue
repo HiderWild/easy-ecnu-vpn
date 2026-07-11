@@ -21,11 +21,14 @@ const lastLogSeq = ref(0)
 const logsLoading = ref(false)
 const LOG_FETCH_LIMIT = 200
 const LOG_POLL_INTERVAL_MS = 2000
+type LogLevelFilter = 'all' | 'warn_error' | 'error'
+const logLevelFilter = ref<LogLevelFilter>(pageState.logs.levelFilter as LogLevelFilter)
 let logPollTimer: ReturnType<typeof setInterval> | null = null
 let programmaticLogScroll = false
 
 const isContextJump = computed(() => route.query.from === 'dashboard')
 const highlightCount = 10 // Number of recent entries to highlight on context jump
+const visibleLogs = computed(() => vpn.logs.filter(logMatchesFilter))
 
 onMounted(async () => {
   sseConnect()
@@ -169,14 +172,28 @@ function clearLogs() {
   vpn.clearLogs()
 }
 
-function formatLogs() {
-  return vpn.logs
+function isErrorLog(entry: LogEntry) {
+  return entry.level === 'error' || entry.message.includes('[ERROR]') || entry.message.includes('[error]')
+}
+
+function isWarningOrErrorLog(entry: LogEntry) {
+  return isErrorLog(entry) || entry.level === 'warn' || entry.message.includes('[WARN]') || entry.message.includes('[warn]')
+}
+
+function logMatchesFilter(entry: LogEntry) {
+  if (logLevelFilter.value === 'warn_error') return isWarningOrErrorLog(entry)
+  if (logLevelFilter.value === 'error') return isErrorLog(entry)
+  return true
+}
+
+function formatLogs(entries: LogEntry[]) {
+  return entries
     .map((e: LogEntry) => `[${e.level.toUpperCase()}] ${e.message}`)
     .join('\n')
 }
 
 function downloadLogs() {
-  const text = formatLogs()
+  const text = formatLogs(visibleLogs.value)
   const blob = new Blob([text], { type: 'text/plain' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
@@ -200,7 +217,7 @@ function copyTextFallback(text: string) {
 }
 
 async function copyLogs() {
-  const text = formatLogs()
+  const text = formatLogs(visibleLogs.value)
   if (!text) {
     ui.addToast('暂无日志可复制', 'warning')
     return
@@ -225,6 +242,10 @@ watch(
   },
 )
 
+watch(logLevelFilter, (next) => {
+  pageState.logs.levelFilter = next
+})
+
 watch(autoScroll, (enabled) => {
   pageState.logs.autoScroll = enabled
   if (enabled) {
@@ -236,7 +257,7 @@ watch(autoScroll, (enabled) => {
 function shouldHighlight(index: number): boolean {
   if (!isContextJump.value) return false
   // Highlight the last `highlightCount` entries
-  return index >= vpn.logs.length - highlightCount
+  return index >= visibleLogs.value.length - highlightCount
 }
 </script>
 
@@ -257,6 +278,20 @@ function shouldHighlight(index: number): boolean {
         </h1>
       </div>
       <div class="flex items-center gap-2">
+        <select
+          v-model="logLevelFilter"
+          class="border border-border bg-surface text-muted rounded-lg px-2.5 py-1.5 text-xs outline-none hover:text-foreground focus:border-accent"
+        >
+          <option value="all">
+            全部显示
+          </option>
+          <option value="warn_error">
+            仅警告和错误
+          </option>
+          <option value="error">
+            仅错误
+          </option>
+        </select>
         <label class="flex items-center gap-2 text-xs text-muted cursor-pointer">
           <input v-model="autoScroll" type="checkbox" class="w-3.5 h-3.5 accent-accent" />
           自动滚动
@@ -291,11 +326,11 @@ function shouldHighlight(index: number): boolean {
       class="bg-bg border border-border rounded-xl p-4 h-[calc(100%-3.5rem)] overflow-y-auto font-mono text-xs leading-relaxed"
       @scroll="handleLogsScroll"
     >
-      <div v-if="vpn.logs.length === 0" class="text-muted text-center py-8">
+      <div v-if="visibleLogs.length === 0" class="text-muted text-center py-8">
         暂无日志
       </div>
       <div
-        v-for="(entry, i) in vpn.logs"
+        v-for="(entry, i) in visibleLogs"
         :key="i"
         class="whitespace-pre-wrap break-all"
         :class="[

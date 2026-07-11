@@ -1,4 +1,7 @@
 #pragma once
+#include "core/tunnel_controller/tunnel_state.hpp"
+
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -13,5 +16,8 @@ namespace exv::core {
 int core_process_main(const std::string& config_dir,
                       const std::string& home_dir,
                       bool use_stdin = false);
+
+bool should_inspect_helper_for_registry(
+    const std::optional<TunnelStatusSnapshot>& status);
 
 } // namespace exv::core

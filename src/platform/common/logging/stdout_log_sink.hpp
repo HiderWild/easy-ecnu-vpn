@@ -7,6 +7,8 @@
 
 namespace exv::platform::logging {
 
+std::mutex &stdout_stream_mutex();
+
 class StdoutLogSink final : public exv::observability::LogSink {
 public:
   explicit StdoutLogSink(std::ostream &out);
@@ -16,7 +18,6 @@ public:
 
 private:
   std::ostream &out_;
-  std::mutex mutex_;
 };
 
 } // namespace exv::platform::logging

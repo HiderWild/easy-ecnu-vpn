@@ -20,6 +20,7 @@ export const usePageStateStore = defineStore('pageState', () => {
       scrollTop: 0,
       userScrolled: false,
       autoScroll: true,
+      levelFilter: 'all',
     },
   })
 

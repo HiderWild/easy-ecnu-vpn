@@ -78,8 +78,18 @@ Config import_from(const std::string &path) {
       cfg.mtu = j["mtu"].get<int>();
     if (j.contains("useragent"))
       cfg.useragent = j["useragent"].get<std::string>();
-    if (j.contains("disable_dtls"))
+    if (j.contains("disable_dtls")) {
       cfg.disable_dtls = j["disable_dtls"].get<bool>();
+      cfg.dtls_mode = cfg.disable_dtls ? "disabled" : "auto";
+    }
+    if (j.contains("dtls_mode")) {
+      cfg.dtls_mode = j["dtls_mode"].get<std::string>();
+      if (cfg.dtls_mode != "auto" && cfg.dtls_mode != "enabled" &&
+          cfg.dtls_mode != "disabled") {
+        cfg.dtls_mode = cfg.disable_dtls ? "disabled" : "auto";
+      }
+      cfg.disable_dtls = cfg.dtls_mode == "disabled";
+    }
     if (j.contains("routes"))
       cfg.routes = j["routes"].get<std::vector<std::string>>();
     if (j.contains("extra_args"))
@@ -98,6 +108,9 @@ Config import_from(const std::string &path) {
           j["windows_tap_interface"].get<std::string>();
     if (j.contains("auto_reconnect"))
       cfg.auto_reconnect = j["auto_reconnect"].get<bool>();
+    if (j.contains("retry_limit"))
+      cfg.retry_limit = config_detail::normalize_retry_limit(
+          j["retry_limit"].get<int>());
     if (j.contains("minimal_mode"))
       cfg.minimal_mode = j["minimal_mode"].get<bool>();
     if (j.contains("service_install_prompt_seen"))
@@ -117,6 +130,11 @@ Config import_from(const std::string &path) {
     if (j.contains("auto_connect_on_launch"))
       cfg.auto_connect_on_launch =
           j["auto_connect_on_launch"].get<bool>();
+    if (j.contains("silent_startup"))
+      cfg.silent_startup = j["silent_startup"].get<bool>();
+    if (j.contains("connection_state_notifications"))
+      cfg.connection_state_notifications =
+          j["connection_state_notifications"].get<bool>();
 
     if (j.contains("password")) {
       std::string pw = j["password"].get<std::string>();

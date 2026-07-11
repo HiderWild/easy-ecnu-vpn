@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, ref, watch } from 'vue'
 import PasswordRevealButton from './PasswordRevealButton.vue'
 
 defineOptions({
@@ -45,6 +45,16 @@ const emit = defineEmits<{
 
 const revealed = ref(false)
 const inputRef = ref<HTMLInputElement | null>(null)
+const hasRevealableValue = computed(() => props.modelValue.length > 0)
+
+watch(
+  () => props.modelValue,
+  (value) => {
+    if (value.length === 0) {
+      revealed.value = false
+    }
+  },
+)
 
 function updateValue(event: Event) {
   emit('update:modelValue', (event.target as HTMLInputElement).value)
@@ -81,7 +91,7 @@ defineExpose({ focus })
         @keyup.enter="emit('keyupEnter', $event)"
       />
       <PasswordRevealButton
-        v-if="props.showRevealButton"
+        v-if="props.showRevealButton && hasRevealableValue"
         v-model:revealed="revealed"
         :class="props.revealButtonClass"
       />

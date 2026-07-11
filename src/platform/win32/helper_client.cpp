@@ -1,5 +1,6 @@
 #include "platform/common/helper_client.hpp"
 #include "platform/common/helper_platform.hpp"
+#include "observability/log_facade.hpp"
 
 #include <string>
 
@@ -59,9 +60,14 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
   }
 
   if (hPipe == INVALID_HANDLE_VALUE) {
+    exv::observability::LogFacade::event(
+        "WARN", "helper", "helper.request.connect_failed",
+        "Failed to connect to helper for platform request",
+        {{"endpoint", endpoint.endpoint},
+         {"win32_error", std::to_string(last_error)}});
     return nlohmann::json{{"ok", false},
-                          {"message", "Helper daemon not available"},
-                          {"code", kHelperUnavailableCode},
+                           {"message", "Helper daemon not available"},
+                           {"code", kHelperUnavailableCode},
                           {"win32_error", static_cast<int>(last_error)}};
   }
 
@@ -69,9 +75,19 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
   if (!WriteFile(hPipe, payload.c_str(), static_cast<DWORD>(payload.size()),
                  &bytesWritten, NULL) ||
       bytesWritten != payload.size()) {
+    const DWORD err = GetLastError();
+    exv::observability::LogFacade::event(
+        "WARN", "helper", "helper.request.write_failed",
+        "Failed to write platform helper request",
+        {{"endpoint", endpoint.endpoint},
+         {"win32_error", std::to_string(err)},
+         {"bytes_expected", std::to_string(payload.size())},
+         {"bytes_written", std::to_string(bytesWritten)}});
     CloseHandle(hPipe);
     return nlohmann::json{{"ok", false},
-                          {"message", "Failed to send helper request"}};
+                          {"message", "Failed to send helper request"},
+                          {"code", kHelperUnavailableCode},
+                          {"win32_error", static_cast<int>(err)}};
   }
 
   char buffer[1024];
@@ -80,6 +96,11 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
   while (GetTickCount64() < read_deadline) {
     DWORD available = 0;
     if (!PeekNamedPipe(hPipe, NULL, 0, NULL, &available, NULL)) {
+      exv::observability::LogFacade::event(
+          "WARN", "helper", "helper.request.peek_failed",
+          "Failed while waiting for platform helper response",
+          {{"endpoint", endpoint.endpoint},
+           {"win32_error", std::to_string(GetLastError())}});
       break;
     }
     if (available == 0) {
@@ -88,6 +109,12 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
     }
     if (!ReadFile(hPipe, buffer, sizeof(buffer), &bytesRead, NULL) ||
         bytesRead == 0) {
+      exv::observability::LogFacade::event(
+          "WARN", "helper", "helper.request.read_failed",
+          "Failed to read platform helper response",
+          {{"endpoint", endpoint.endpoint},
+           {"win32_error", std::to_string(GetLastError())},
+           {"bytes_read", std::to_string(bytesRead)}});
       break;
     }
     raw.append(buffer, bytesRead);
@@ -102,15 +129,26 @@ nlohmann::json send_helper_request(const HelperEndpoint &endpoint,
   raw = trim_copy(raw);
 
   if (raw.empty()) {
+    exv::observability::LogFacade::event(
+        "WARN", "helper", "helper.request.empty_response",
+        "Platform helper request returned an empty response",
+        {{"endpoint", endpoint.endpoint},
+         {"timeout_ms", std::to_string(kHelperResponseTimeoutMs)}});
     return nlohmann::json{{"ok", false},
-                          {"message", "Empty helper response"}};
+                          {"message", "Empty helper response"},
+                          {"code", kHelperUnavailableCode}};
   }
 
   try {
     return nlohmann::json::parse(raw);
   } catch (...) {
+    exv::observability::LogFacade::event(
+        "WARN", "helper", "helper.request.parse_failed",
+        "Failed to parse platform helper response",
+        {{"endpoint", endpoint.endpoint}});
     return nlohmann::json{{"ok", false},
-                          {"message", "Failed to parse helper response"}};
+                          {"message", "Failed to parse helper response"},
+                          {"code", kHelperUnavailableCode}};
   }
 }
 

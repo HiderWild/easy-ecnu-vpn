@@ -193,12 +193,14 @@ nlohmann::json settings_json(const Config &cfg) {
 
   return nlohmann::json{{"mtu", cfg.mtu},
                         {"dtls", !cfg.disable_dtls},
+                        {"dtls_mode", cfg.dtls_mode},
                         {"extra_args", extra_args},
                         {"log_path", cfg.log_file},
                         {"vpn_engine", cfg.vpn_engine},
                         {"windows_tunnel_driver", cfg.windows_tunnel_driver},
                         {"windows_tap_interface", cfg.windows_tap_interface},
                         {"auto_reconnect", cfg.auto_reconnect},
+                        {"retry_limit", cfg.retry_limit},
                         {"minimal_mode", cfg.minimal_mode},
                         {"service_install_prompt_seen",
                          cfg.service_install_prompt_seen},
@@ -210,7 +212,10 @@ nlohmann::json settings_json(const Config &cfg) {
                          cfg.include_class_b_private_routes},
                         {"launch_at_login", cfg.launch_at_login},
                         {"auto_connect_on_launch",
-                         cfg.auto_connect_on_launch}};
+                         cfg.auto_connect_on_launch},
+                        {"silent_startup", cfg.silent_startup},
+                        {"connection_state_notifications",
+                         cfg.connection_state_notifications}};
 }
 
 nlohmann::json full_config_json(const Config &cfg) {
@@ -645,10 +650,10 @@ UseCaseResult validate_settings_payload_before_save(
     if (!settings["retry_limit"].is_number_integer()) {
       return type_error("retry_limit", "an integer");
     }
-    if (settings["retry_limit"].get<int>() < -1) {
+    if (settings["retry_limit"].get<int>() < 0) {
       return UseCaseResult::fail(
           "invalid_payload",
-          "retry_limit must be -1, 0, or a positive integer.");
+          "retry_limit must be 0 or a positive integer.");
     }
   }
 
@@ -666,14 +671,17 @@ UseCaseResult validate_settings_payload_before_save(
 
   for (UseCaseResult result :
        {validate_bool("dtls"), validate_bool("disable_dtls"),
-        validate_bool("auto_reconnect"), validate_bool("minimal_mode"),
+       validate_bool("auto_reconnect"), validate_bool("minimal_mode"),
         validate_bool("service_install_prompt_seen"),
         validate_bool("minimal_install_service_before_connect"),
         validate_bool("include_class_a_private_routes"),
         validate_bool("include_class_b_private_routes"),
         validate_bool("launch_at_login"),
         validate_bool("auto_connect_on_launch"),
+        validate_bool("silent_startup"),
+        validate_bool("connection_state_notifications"),
         validate_string("log_path"), validate_string("log_file"),
+        validate_string("dtls_mode"),
         validate_string("vpn_engine"),
         validate_string("windows_tunnel_driver"),
         validate_string("windows_tap_interface")}) {
@@ -687,6 +695,15 @@ UseCaseResult validate_settings_payload_before_save(
     return UseCaseResult::fail(
         "invalid_payload",
         "vpn_engine is native-only; legacy engine has been removed.");
+  }
+
+  if (settings.contains("dtls_mode")) {
+    const std::string mode = settings["dtls_mode"].get<std::string>();
+    if (mode != "auto" && mode != "enabled" && mode != "disabled") {
+      return UseCaseResult::fail(
+          "invalid_payload",
+          "dtls_mode must be auto, enabled, or disabled.");
+    }
   }
 
   if (settings.contains("windows_tunnel_driver")) {
@@ -901,6 +918,22 @@ UseCaseResult ConfigUseCases::save_settings(const nlohmann::json &payload) {
       return error_from_config_api(err);
     }
   }
+  if (settings.contains("dtls_mode") && settings["dtls_mode"].is_string()) {
+    std::string err = exv::config_api::config_set(
+        manager_, "dtls_mode", settings["dtls_mode"].get<std::string>());
+    if (!err.empty()) {
+      return error_from_config_api(err);
+    }
+  }
+  if (settings.contains("retry_limit") &&
+      settings["retry_limit"].is_number_integer()) {
+    std::string err = exv::config_api::config_set(
+        manager_, "retry_limit",
+        std::to_string(settings["retry_limit"].get<int>()));
+    if (!err.empty()) {
+      return error_from_config_api(err);
+    }
+  }
   if (settings.contains("extra_args")) {
     Config updated = manager_.load();
     if (settings["extra_args"].is_array()) {
@@ -937,7 +970,10 @@ UseCaseResult ConfigUseCases::save_settings(const nlohmann::json &payload) {
         set_bool("include_class_b_private_routes",
                  "include_class_b_private_routes"),
         set_bool("launch_at_login", "launch_at_login"),
-        set_bool("auto_connect_on_launch", "auto_connect_on_launch")}) {
+        set_bool("auto_connect_on_launch", "auto_connect_on_launch"),
+        set_bool("silent_startup", "silent_startup"),
+        set_bool("connection_state_notifications",
+                 "connection_state_notifications")}) {
     if (!result.success) {
       return result;
     }

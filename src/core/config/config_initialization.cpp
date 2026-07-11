@@ -27,6 +27,10 @@ bool is_string_array(const json &value) {
 }
 
 bool field_type_matches(std::string_view name, const json &value) {
+  if (name == "dtls_mode") {
+    return value.is_string() &&
+           exv::config_detail::is_valid_dtls_mode(value.get<std::string>());
+  }
   if (name == "server" || name == "username" || name == "password" ||
       name == "useragent" || name == "log_file" || name == "vpn_engine" ||
       name == "windows_tunnel_driver" || name == "windows_tap_interface") {
@@ -35,13 +39,18 @@ bool field_type_matches(std::string_view name, const json &value) {
   if (name == "mtu") {
     return value.is_number_integer();
   }
+  if (name == "retry_limit") {
+    return value.is_number_integer() && value.get<int>() >= 0;
+  }
   if (name == "disable_dtls" || name == "remember_password" ||
       name == "auto_reconnect" || name == "minimal_mode" ||
       name == "service_install_prompt_seen" ||
       name == "minimal_install_service_before_connect" ||
       name == "include_class_a_private_routes" ||
       name == "include_class_b_private_routes" ||
-      name == "launch_at_login" || name == "auto_connect_on_launch") {
+      name == "launch_at_login" || name == "auto_connect_on_launch" ||
+      name == "silent_startup" ||
+      name == "connection_state_notifications") {
     return value.is_boolean();
   }
   if (name == "routes" || name == "extra_args") {
@@ -57,6 +66,7 @@ constexpr std::string_view kRequiredFields[] = {
     "mtu",
     "useragent",
     "disable_dtls",
+    "dtls_mode",
     "remember_password",
     "routes",
     "extra_args",
@@ -65,6 +75,7 @@ constexpr std::string_view kRequiredFields[] = {
     "windows_tunnel_driver",
     "windows_tap_interface",
     "auto_reconnect",
+    "retry_limit",
     "minimal_mode",
     "service_install_prompt_seen",
     "minimal_install_service_before_connect",
@@ -72,6 +83,8 @@ constexpr std::string_view kRequiredFields[] = {
     "include_class_b_private_routes",
     "launch_at_login",
     "auto_connect_on_launch",
+    "silent_startup",
+    "connection_state_notifications",
 };
 
 Config default_config() {
@@ -127,6 +140,15 @@ ConfigInitializationResult repaired_object_result(const json &value,
                                                   const std::string &config_dir) {
   json repaired = value;
   const json defaults = default_config();
+  const bool has_valid_dtls_mode =
+      repaired.contains("dtls_mode") && repaired["dtls_mode"].is_string() &&
+      exv::config_detail::is_valid_dtls_mode(
+          repaired["dtls_mode"].get<std::string>());
+  if (!has_valid_dtls_mode &&
+      repaired.contains("disable_dtls") && repaired["disable_dtls"].is_boolean()) {
+    repaired["dtls_mode"] = repaired["disable_dtls"].get<bool>() ? "disabled"
+                                                                : "auto";
+  }
   for (const auto field : kRequiredFields) {
     const std::string field_name(field);
     if (!repaired.contains(field_name) ||

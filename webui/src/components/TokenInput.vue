@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import { X } from 'lucide-vue-next'
+import { Plus, X } from 'lucide-vue-next'
 import PasswordField from './PasswordField.vue'
 
 const props = withDefaults(defineProps<{
@@ -44,9 +44,6 @@ function onTokenKeydown(event: KeyboardEvent) {
     event.preventDefault()
     commitTokens(pendingToken.value)
   }
-  if (event.key === 'Backspace' && !pendingToken.value && tokens.value.length > 0) {
-    removeToken(tokens.value.length - 1)
-  }
 }
 
 function onTokenPaste(event: ClipboardEvent) {
@@ -58,30 +55,45 @@ function onTokenPaste(event: ClipboardEvent) {
 </script>
 
 <template>
-  <div v-if="mode === 'tokens'" class="flex min-h-10 flex-wrap items-center gap-2 rounded-lg border border-border bg-bg px-2 py-1.5 text-sm text-foreground focus-within:border-primary">
-    <span
-      v-for="(token, index) in tokens"
-      :key="`${token}-${index}`"
-      class="inline-flex max-w-full items-center gap-1 rounded-md bg-surface px-2 py-1 text-xs text-foreground"
-    >
-      <span class="truncate">{{ token }}</span>
+  <div v-if="mode === 'tokens'" class="token-input token-input--tokens">
+    <div v-if="tokens.length > 0" class="token-input__tokens">
+      <span
+        v-for="(token, index) in tokens"
+        :key="`${token}-${index}`"
+        class="token-input__token"
+      >
+        <span class="token-input__token-label">{{ token }}</span>
+        <button
+          type="button"
+          class="token-input__remove"
+          aria-label="移除路由"
+          @mousedown.stop
+          @click.stop="removeToken(index)"
+        >
+          <X class="h-3 w-3" />
+        </button>
+      </span>
+    </div>
+    <div class="token-input__field-row">
+      <input
+        v-model="pendingToken"
+        :placeholder="placeholder"
+        class="token-input__field"
+        @blur="commitTokens(pendingToken)"
+        @keydown="onTokenKeydown"
+        @paste="onTokenPaste"
+      />
       <button
         type="button"
-        class="grid h-4 w-4 place-items-center rounded text-muted hover:bg-bg hover:text-foreground"
-        aria-label="移除路由"
-        @click="removeToken(index)"
+        class="token-input__add"
+        aria-label="添加路由"
+        :disabled="!pendingToken.trim()"
+        @mousedown.prevent
+        @click="commitTokens(pendingToken)"
       >
-        <X class="h-3 w-3" />
+        <Plus class="h-3.5 w-3.5" />
       </button>
-    </span>
-    <input
-      v-model="pendingToken"
-      :placeholder="tokens.length === 0 ? placeholder : ''"
-      class="min-w-28 flex-1 bg-transparent px-1 py-1 text-sm text-foreground outline-none placeholder:text-muted"
-      @blur="commitTokens(pendingToken)"
-      @keydown="onTokenKeydown"
-      @paste="onTokenPaste"
-    />
+    </div>
   </div>
 
   <div v-else class="relative">
@@ -95,3 +107,114 @@ function onTokenPaste(event: ClipboardEvent) {
     />
   </div>
 </template>
+
+<style scoped>
+.token-input--tokens {
+  display: grid;
+  align-content: start;
+  min-height: 36px;
+  min-width: 0;
+  gap: 6px;
+  border: 1px solid var(--color-border);
+  border-radius: 8px;
+  background: var(--color-bg);
+  padding: 7px;
+  color: var(--color-foreground);
+  font-size: 13px;
+}
+
+.token-input--tokens:focus-within {
+  border-color: var(--color-accent);
+}
+
+.token-input__tokens {
+  display: flex;
+  max-height: 132px;
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+  overflow: auto;
+  padding-right: 2px;
+  overscroll-behavior: contain;
+}
+
+.token-input__token {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 5px;
+  border-radius: 6px;
+  background: var(--color-surface);
+  padding: 5px 7px;
+  color: var(--color-foreground);
+  font-size: 12px;
+  line-height: 1.2;
+}
+
+.token-input__token-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.token-input__remove {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 4px;
+  color: var(--color-muted);
+}
+
+.token-input__remove:hover {
+  background: var(--color-bg);
+  color: var(--color-foreground);
+}
+
+.token-input__field {
+  min-width: 0;
+  flex: 1 1 auto;
+  width: 100%;
+  border: 0;
+  background: transparent;
+  color: var(--color-foreground);
+  font-size: 13px;
+  outline: none;
+}
+
+.token-input__field-row {
+  display: flex;
+  min-height: 32px;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--color-surface) 32%, transparent);
+  padding: 0 4px 0 8px;
+}
+
+.token-input__field::placeholder {
+  color: var(--color-muted);
+}
+
+.token-input__add {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  flex: 0 0 auto;
+  place-items: center;
+  border-radius: 5px;
+  color: var(--color-accent);
+}
+
+.token-input__add:hover:not(:disabled) {
+  background: var(--accent-soft-bg);
+}
+
+.token-input__add:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+</style>

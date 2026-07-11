@@ -5,6 +5,7 @@
 #include <nlohmann/json.hpp>
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <cstring>
 
@@ -24,16 +25,69 @@ namespace exv::helper {
 
 using json = nlohmann::json;
 
-#ifdef _WIN32
 namespace {
 
+std::string helper_op_name(HelperOp op) {
+    switch (op) {
+    case HelperOp::Hello:
+        return "Hello";
+    case HelperOp::StartSession:
+        return "StartSession";
+    case HelperOp::PrepareTunnelDevice:
+        return "PrepareTunnelDevice";
+    case HelperOp::ApplyTunnelConfig:
+        return "ApplyTunnelConfig";
+    case HelperOp::Heartbeat:
+        return "Heartbeat";
+    case HelperOp::Cleanup:
+        return "Cleanup";
+    case HelperOp::GetSnapshot:
+        return "GetSnapshot";
+    case HelperOp::Shutdown:
+        return "Shutdown";
+    case HelperOp::Inspect:
+        return "Inspect";
+    case HelperOp::AcquireCoreLease:
+        return "AcquireCoreLease";
+    case HelperOp::KeepAlive:
+        return "KeepAlive";
+    case HelperOp::ReleaseCoreLease:
+        return "ReleaseCoreLease";
+    }
+    return "Unknown";
+}
+
+void log_helper_client_event(
+    const std::string& level,
+    const std::string& code,
+    const std::string& message,
+    std::vector<std::pair<std::string, std::string>> fields = {}) {
+    exv::observability::LogFacade::event(level, "helper", code, message,
+                                         std::move(fields));
+}
+
+void log_helper_rpc_failure(const PipeClientConfig& config,
+                            HelperOp op,
+                            const std::string& error_code,
+                            const std::string& error_message,
+                            bool connected) {
+    log_helper_client_event(
+        "WARN", "helper.rpc.failed", "Helper RPC request failed",
+        {{"op", helper_op_name(op)},
+         {"endpoint", config.pipe_path},
+         {"error_code", error_code.empty() ? "unknown" : error_code},
+         {"error_message", error_message},
+         {"connected", connected ? "true" : "false"}});
+}
+
+#ifdef _WIN32
 bool is_windows_named_pipe_path(const std::string& path) {
     return path.rfind("\\\\.\\pipe\\", 0) == 0 ||
            path.rfind("\\\\?\\pipe\\", 0) == 0;
 }
+#endif
 
 } // namespace
-#endif
 
 // ---------------------------------------------------------------------------
 // Construction / destruction
@@ -56,12 +110,17 @@ bool PipeHelperClient::connect() {
 
 #ifdef _WIN32
     if (!is_windows_named_pipe_path(config_.pipe_path)) {
+        log_helper_client_event(
+            "WARN", "helper.pipe.invalid_endpoint",
+            "Helper pipe endpoint is not a Windows named pipe",
+            {{"endpoint", config_.pipe_path}});
         return false;
     }
 
     const DWORD start_tick = GetTickCount();
     const DWORD deadline = start_tick + static_cast<DWORD>(config_.connect_timeout_ms);
     HANDLE hPipe = INVALID_HANDLE_VALUE;
+    DWORD last_error = ERROR_SUCCESS;
 
     while (GetTickCount() < deadline) {
         hPipe = CreateFileA(
@@ -71,10 +130,10 @@ bool PipeHelperClient::connect() {
         if (hPipe != INVALID_HANDLE_VALUE)
             break;
 
-        DWORD err = GetLastError();
-        if (err == ERROR_PIPE_BUSY) {
+        last_error = GetLastError();
+        if (last_error == ERROR_PIPE_BUSY) {
             WaitNamedPipeA(config_.pipe_path.c_str(), 250);
-        } else if (err == ERROR_FILE_NOT_FOUND) {
+        } else if (last_error == ERROR_FILE_NOT_FOUND) {
             // Pipe not yet available; retry with shorter interval for faster startup
             DWORD elapsed = GetTickCount() - start_tick;
             if (elapsed >= static_cast<DWORD>(config_.connect_timeout_ms))
@@ -86,18 +145,37 @@ bool PipeHelperClient::connect() {
     }
 
     if (hPipe == INVALID_HANDLE_VALUE) {
+        log_helper_client_event(
+            "WARN", "helper.pipe.connect_failed",
+            "Failed to connect to helper pipe",
+            {{"endpoint", config_.pipe_path},
+             {"win32_error", std::to_string(last_error)},
+             {"timeout_ms", std::to_string(config_.connect_timeout_ms)}});
         return false;
     }
 
     // Set pipe to byte-read mode (matches server's PIPE_READMODE_BYTE)
     DWORD mode = PIPE_READMODE_BYTE;
-    SetNamedPipeHandleState(hPipe, &mode, NULL, NULL);
+    if (!SetNamedPipeHandleState(hPipe, &mode, NULL, NULL)) {
+        const DWORD err = GetLastError();
+        log_helper_client_event(
+            "WARN", "helper.pipe.mode_failed",
+            "Failed to set helper pipe read mode",
+            {{"endpoint", config_.pipe_path},
+             {"win32_error", std::to_string(err)}});
+    }
 
     pipe_handle_ = static_cast<void*>(hPipe);
 #else
     socket_fd_ = socket(AF_UNIX, SOCK_STREAM, 0);
-    if (socket_fd_ < 0)
+    if (socket_fd_ < 0) {
+        log_helper_client_event(
+            "WARN", "helper.pipe.socket_failed",
+            "Failed to create helper Unix socket",
+            {{"endpoint", config_.pipe_path},
+             {"errno", std::to_string(errno)}});
         return false;
+    }
 
     sockaddr_un addr{};
     addr.sun_family = AF_UNIX;
@@ -105,8 +183,15 @@ bool PipeHelperClient::connect() {
                   config_.pipe_path.c_str());
 
     if (::connect(socket_fd_, reinterpret_cast<sockaddr*>(&addr), sizeof(addr)) != 0) {
+        const int saved_errno = errno;
         ::close(socket_fd_);
         socket_fd_ = -1;
+        log_helper_client_event(
+            "WARN", "helper.pipe.connect_failed",
+            "Failed to connect to helper Unix socket",
+            {{"endpoint", config_.pipe_path},
+             {"errno", std::to_string(saved_errno)},
+             {"timeout_ms", std::to_string(config_.connect_timeout_ms)}});
         return false;
     }
 #endif
@@ -158,10 +243,27 @@ bool PipeHelperClient::send_raw(const std::string& data) {
     if (!WriteFile(hPipe, data.c_str(), static_cast<DWORD>(data.size()),
                    &bytes_written, NULL) ||
         bytes_written != data.size()) {
+        const DWORD err = GetLastError();
+        log_helper_client_event(
+            "WARN", "helper.pipe.write_failed",
+            "Failed to write helper pipe request",
+            {{"endpoint", config_.pipe_path},
+             {"win32_error", std::to_string(err)},
+             {"bytes_expected", std::to_string(data.size())},
+             {"bytes_written", std::to_string(bytes_written)}});
         disconnect();
         return false;
     }
-    FlushFileBuffers(hPipe);
+    if (!FlushFileBuffers(hPipe)) {
+        const DWORD err = GetLastError();
+        log_helper_client_event(
+            "WARN", "helper.pipe.flush_failed",
+            "Failed to flush helper pipe request",
+            {{"endpoint", config_.pipe_path},
+             {"win32_error", std::to_string(err)}});
+        disconnect();
+        return false;
+    }
     return true;
 #else
     const char* ptr = data.c_str();
@@ -169,6 +271,13 @@ bool PipeHelperClient::send_raw(const std::string& data) {
     while (remaining > 0) {
         ssize_t written = ::write(socket_fd_, ptr, remaining);
         if (written <= 0) {
+            const int saved_errno = errno;
+            log_helper_client_event(
+                "WARN", "helper.pipe.write_failed",
+                "Failed to write helper socket request",
+                {{"endpoint", config_.pipe_path},
+                 {"errno", std::to_string(saved_errno)},
+                 {"bytes_remaining", std::to_string(remaining)}});
             disconnect();
             return false;
         }
@@ -196,6 +305,11 @@ std::string PipeHelperClient::recv_raw() {
         DWORD available = 0;
         if (!PeekNamedPipe(hPipe, NULL, 0, NULL, &available, NULL)) {
             DWORD err = GetLastError();
+            log_helper_client_event(
+                "WARN", "helper.pipe.peek_failed",
+                "Failed while waiting for helper pipe response",
+                {{"endpoint", config_.pipe_path},
+                 {"win32_error", std::to_string(err)}});
             if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
                 disconnect();
             }
@@ -203,6 +317,11 @@ std::string PipeHelperClient::recv_raw() {
         }
         if (available == 0) {
             if (GetTickCount64() >= deadline) {
+                log_helper_client_event(
+                    "WARN", "helper.pipe.response_timeout",
+                    "Timed out waiting for helper pipe response",
+                    {{"endpoint", config_.pipe_path},
+                     {"timeout_ms", std::to_string(timeout_ms)}});
                 disconnect();
                 break;
             }
@@ -214,6 +333,12 @@ std::string PipeHelperClient::recv_raw() {
         if (!ok || bytes_read == 0) {
             // Connection lost or pipe closed
             DWORD err = GetLastError();
+            log_helper_client_event(
+                "WARN", "helper.pipe.read_failed",
+                "Failed to read helper pipe response",
+                {{"endpoint", config_.pipe_path},
+                 {"win32_error", std::to_string(err)},
+                 {"bytes_read", std::to_string(bytes_read)}});
             if (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED) {
                 disconnect();
             }
@@ -232,6 +357,11 @@ std::string PipeHelperClient::recv_raw() {
     while (true) {
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
+            log_helper_client_event(
+                "WARN", "helper.pipe.response_timeout",
+                "Timed out waiting for helper socket response",
+                {{"endpoint", config_.pipe_path},
+                 {"timeout_ms", std::to_string(config_.response_timeout_ms)}});
             disconnect();
             break;
         }
@@ -242,13 +372,30 @@ std::string PipeHelperClient::recv_raw() {
         pfd.events = POLLIN;
         int ready = ::poll(&pfd, 1, static_cast<int>(remaining.count()));
         if (ready <= 0) {
+            const int saved_errno = errno;
+            log_helper_client_event(
+                "WARN",
+                ready == 0 ? "helper.pipe.response_timeout"
+                           : "helper.pipe.poll_failed",
+                ready == 0 ? "Timed out waiting for helper socket response"
+                           : "Failed while polling helper socket response",
+                {{"endpoint", config_.pipe_path},
+                 {"errno", std::to_string(saved_errno)},
+                 {"timeout_ms", std::to_string(config_.response_timeout_ms)}});
             disconnect();
             break;
         }
         n = ::read(socket_fd_, buffer, sizeof(buffer) - 1);
         if (n <= 0) {
             // EOF or error -- peer disconnected
-            if (n == 0 || (errno != EINTR && errno != EAGAIN))
+            const int saved_errno = errno;
+            log_helper_client_event(
+                "WARN", "helper.pipe.read_failed",
+                "Failed to read helper socket response",
+                {{"endpoint", config_.pipe_path},
+                 {"errno", std::to_string(saved_errno)},
+                 {"bytes_read", std::to_string(n)}});
+            if (n == 0 || (saved_errno != EINTR && saved_errno != EAGAIN))
                 disconnect();
             break;
         }
@@ -283,6 +430,8 @@ HelperResponse PipeHelperClient::send_request(HelperOp op,
         resp.success = false;
         resp.error_code = "not_connected";
         resp.error_message = "PipeHelperClient is not connected";
+        log_helper_rpc_failure(config_, op, resp.error_code, resp.error_message,
+                               connected_);
         return resp;
     }
 
@@ -299,6 +448,8 @@ HelperResponse PipeHelperClient::send_request(HelperOp op,
         resp.success = false;
         resp.error_code = "send_failed";
         resp.error_message = "Failed to send request over pipe";
+        log_helper_rpc_failure(config_, op, resp.error_code, resp.error_message,
+                               connected_);
         return resp;
     }
 
@@ -307,6 +458,8 @@ HelperResponse PipeHelperClient::send_request(HelperOp op,
         resp.success = false;
         resp.error_code = "recv_failed";
         resp.error_message = "Empty response from helper daemon";
+        log_helper_rpc_failure(config_, op, resp.error_code, resp.error_message,
+                               connected_);
         return resp;
     }
 
@@ -332,6 +485,11 @@ HelperResponse PipeHelperClient::send_request(HelperOp op,
         resp.error_code = "helper_response_empty";
         resp.error_message =
             "Helper acknowledged the request but returned an empty response payload";
+    }
+
+    if (!resp.success) {
+        log_helper_rpc_failure(config_, op, resp.error_code, resp.error_message,
+                               connected_);
     }
 
     return resp;
@@ -467,7 +625,14 @@ AcquireCoreLeaseResponse PipeHelperClient::acquire_core_lease(
     json payload = req;
     auto resp = send_request(HelperOp::AcquireCoreLease, payload);
     if (!resp.success) {
-        return AcquireCoreLeaseResponse{};
+        exv::observability::LogFacade::warn(
+            "PipeHelperClient: AcquireCoreLease failed code=" +
+            resp.error_code + " message=" + resp.error_message);
+        AcquireCoreLeaseResponse acr;
+        acr.accepted = false;
+        acr.error_code = resp.error_code;
+        acr.error_message = resp.error_message;
+        return acr;
     }
     return acquire_core_lease_response_from_json(json::parse(resp.payload_json));
 }

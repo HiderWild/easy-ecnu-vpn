@@ -30,6 +30,8 @@ void TunnelController::Impl::do_disconnect(DisconnectReason reason) {
         intent_.user_disconnect_reason = reason;
 
         stop_heartbeat();
+        stop_core_lease_keepalive();
+        scheduler_.cancel_all_and_wait();
 
         // Always stop the native engine session. The monitor thread may have
         // observed a clean packet-loop exit and flipped running_ to false
@@ -41,26 +43,41 @@ void TunnelController::Impl::do_disconnect(DisconnectReason reason) {
     }
 
 void TunnelController::Impl::shutdown_helper_session_for_cleanup() {
+        if (!network_config_applied_ && session_id_.value.empty() &&
+            !prepared_tunnel_device_) {
+            if (auto delegated_ops = as_helper_delegating_ops(net_ops_)) {
+                delegated_ops->clear_session();
+            }
+            assigned_internal_ip_.clear();
+            packet_loop_started_ = false;
+            return;
+        }
+
         try {
-            exv::helper::ShutdownRequest req;
-            req.session_id = session_id_;
-            req.policy.remove_routes       = true;
-            req.policy.remove_dns          = true;
-            req.policy.remove_adapter      = true;
-            req.policy.remove_firewall_rules = true;
+            if (helper_) {
+                exv::helper::ShutdownRequest req;
+                req.session_id = session_id_;
+                req.policy.remove_routes       = true;
+                req.policy.remove_dns          = true;
+                req.policy.remove_adapter      = true;
+                req.policy.remove_firewall_rules = true;
 
-            auto resp = helper_->shutdown(req);
+                auto resp = helper_->shutdown(req);
 
-            if (!resp.cleanup_success) {
-                if (resp.errors.empty()) {
-                    log_tunnel_event("WARN", "helper.session.shutdown_partial",
-                                     "Helper session shutdown reported partial cleanup");
+                if (!resp.cleanup_success) {
+                    if (resp.errors.empty()) {
+                        log_tunnel_event("WARN", "helper.session.shutdown_partial",
+                                         "Helper session shutdown reported partial cleanup");
+                    }
+                    for (const auto& error : resp.errors) {
+                        log_tunnel_event("WARN", "helper.session.shutdown_partial",
+                                         "Helper session shutdown cleanup error",
+                                         {{"error", error}});
+                    }
                 }
-                for (const auto& error : resp.errors) {
-                    log_tunnel_event("WARN", "helper.session.shutdown_partial",
-                                     "Helper session shutdown cleanup error",
-                                     {{"error", error}});
-                }
+            } else {
+                log_tunnel_event("WARN", "helper.session.shutdown.skipped",
+                                 "No helper client is available for session shutdown");
             }
         } catch (const std::exception&) {
             // Cleanup threw — nothing we can do; finish best effort.
@@ -81,6 +98,42 @@ void TunnelController::Impl::cleanup_after_failed_startup() {
         shutdown_helper_session_for_cleanup();
         release_core_lease();
         close_helper_client_after_terminal_disconnect();
+    }
+
+void TunnelController::Impl::cleanup_after_recovery_request(
+        const std::string &reason) {
+        log_tunnel_event("INFO", "connection.runtime.recovery_cleanup.started",
+                         "Cleaning terminal tunnel resources before coordinator recovery",
+                         {{"reason", reason},
+                          {"phase", tunnel_phase_wire_name(phase_)},
+                          {"session_active",
+                           session_id_.value.empty() ? "false" : "true"},
+                          {"network_config_applied",
+                           network_config_applied_ ? "true" : "false"},
+                          {"core_lease_active",
+                           core_lease_id_.empty() ? "false" : "true"}});
+
+        stop_heartbeat();
+        stop_core_lease_keepalive();
+        scheduler_.cancel_all_and_wait();
+
+        shutdown_helper_session_for_cleanup();
+        const bool release_ok = release_core_lease();
+        close_helper_client_after_terminal_disconnect();
+
+        if (!release_ok) {
+            log_tunnel_event("WARN", "core_lease.release.incomplete",
+                             "Recovery continued after best-effort CoreLease release",
+                             {{"reason", reason}});
+        }
+
+        log_tunnel_event("INFO", "connection.runtime.recovery_cleanup.completed",
+                         "Terminal tunnel resources cleaned before coordinator recovery",
+                         {{"reason", reason},
+                          {"session_active",
+                           session_id_.value.empty() ? "false" : "true"},
+                          {"core_lease_active",
+                           core_lease_id_.empty() ? "false" : "true"}});
     }
 
 void TunnelController::Impl::do_cleanup() {
@@ -107,6 +160,16 @@ bool TunnelController::Impl::release_core_lease() {
         }
 
         const auto lease_id = core_lease_id_;
+        if (!helper_) {
+            log_tunnel_event("WARN", "core_lease.release.skipped",
+                             "No helper client is available for CoreLease release",
+                             {{"lease_id", lease_id}});
+            core_lease_id_.clear();
+            stop_core_lease_keepalive();
+            update_snapshot();
+            return false;
+        }
+
         bool released = false;
         try {
             log_tunnel_event("INFO", "core_lease.release.starting",

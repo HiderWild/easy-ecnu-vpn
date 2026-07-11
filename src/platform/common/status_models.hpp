@@ -2,6 +2,7 @@
 
 #include <nlohmann/json.hpp>
 
+#include <cstdint>
 #include <string>
 
 namespace exv {
@@ -18,6 +19,14 @@ struct ServiceStatusSnapshot {
   std::string label;
   std::string binary_path;
   std::string warning;
+  std::string health;
+  std::string diagnostic_code;
+  std::string recommended_action;
+  std::string last_start_api;
+  int last_start_native_error = 0;
+  std::string last_start_native_message;
+  std::uint32_t process_id = 0;
+  bool endpoint_reachable = false;
   int service_state = 0;
   bool has_service_state = false;
 };

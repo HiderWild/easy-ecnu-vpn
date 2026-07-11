@@ -5,6 +5,21 @@
 namespace exv {
 namespace vpn_engine {
 
+namespace {
+
+std::string bytes_to_hex(const std::vector<std::uint8_t> &bytes) {
+  static constexpr char kHex[] = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(bytes.size() * 2);
+  for (std::uint8_t byte : bytes) {
+    out.push_back(kHex[(byte >> 4) & 0x0F]);
+    out.push_back(kHex[byte & 0x0F]);
+  }
+  return out;
+}
+
+} // namespace
+
 bool SessionState::network_ready() const {
   return phase == SessionPhase::packet_loop && tunnel_ready && packet_loop_ready;
 }
@@ -79,9 +94,12 @@ nlohmann::json tunnel_metadata_to_json(const TunnelMetadata &metadata) {
                         {"split_include_routes", metadata.split_include_routes},
                         {"split_exclude_routes", metadata.split_exclude_routes},
                         {"server_bypass_ips", metadata.server_bypass_ips},
+                        {"dtls_mode", metadata.dtls_mode},
+                        {"active_data_channel", metadata.active_data_channel},
                         {"dtls_state", metadata.dtls_state},
                         {"dtls_fallback_reason",
                          metadata.dtls_fallback_reason},
+                        {"dtls_fallback_count", metadata.dtls_fallback_count},
                         {"dns_servers", metadata.dns_servers},
                         {"nbns_servers", metadata.nbns_servers},
                         {"default_domain", metadata.default_domain},
@@ -104,6 +122,8 @@ nlohmann::json tunnel_metadata_to_json(const TunnelMetadata &metadata) {
                         {"dtls_session_id", metadata.dtls_session_id},
                         {"dtls_cipher_suite", metadata.dtls_cipher_suite},
                         {"dtls12_cipher_suite", metadata.dtls12_cipher_suite},
+                        {"dtls_master_secret_hex",
+                         bytes_to_hex(metadata.dtls_master_secret)},
                         {"content_encoding", metadata.content_encoding}};
 }
 

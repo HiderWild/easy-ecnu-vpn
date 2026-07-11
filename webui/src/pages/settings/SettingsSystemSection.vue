@@ -55,6 +55,7 @@ const closePreferenceBusy = ref(false)
 const fallbackSettingsDraft: SettingsConfig = {
   mtu: 1400,
   dtls: true,
+  dtls_mode: 'auto',
   extra_args: '',
   log_path: '',
   webui_port: 18080,
@@ -64,14 +65,17 @@ const fallbackSettingsDraft: SettingsConfig = {
   windows_tunnel_driver: 'auto',
   windows_tap_interface: '',
   auto_reconnect: true,
-  retry_limit: -1,
+  retry_limit: 0,
   minimal_mode: false,
   service_install_prompt_seen: false,
   minimal_install_service_before_connect: true,
+  minimize_to_tray_on_connect: false,
   include_class_a_private_routes: false,
   include_class_b_private_routes: false,
   launch_at_login: false,
   auto_connect_on_launch: false,
+  silent_startup: false,
+  connection_state_notifications: false,
 }
 
 const settingsForm = computed(() => props.settingsDraft ?? fallbackSettingsDraft)
@@ -86,6 +90,7 @@ const PROTECTED_EXPORT_WARNING =
   '导出的配置包含可恢复的 VPN 密码。请把导出文件当作敏感文件保存，不要通过不可信渠道共享。'
 
 const nativeEngineSelected = computed(() => settingsForm.value.vpn_engine === 'native')
+const tapNativeBackendImplemented = false
 const driverSupported = computed(() => !!config.driverStatus?.supported)
 const tapAdapters = computed(() => config.driverStatus?.tap_adapters || [])
 const activeRuntimeStatus = computed(() => config.runtimeStatus)
@@ -165,6 +170,21 @@ const startupAutoConnectModel = computed({
     }
     updateSettingField('auto_connect_on_launch', value)
   },
+})
+
+const minimizeToTrayOnConnectModel = computed({
+  get: () => settingsForm.value.minimize_to_tray_on_connect,
+  set: (value: boolean) => updateSettingField('minimize_to_tray_on_connect', value),
+})
+
+const silentStartupModel = computed({
+  get: () => settingsForm.value.silent_startup,
+  set: (value: boolean) => updateSettingField('silent_startup', value),
+})
+
+const connectionStateNotificationsModel = computed({
+  get: () => settingsForm.value.connection_state_notifications,
+  set: (value: boolean) => updateSettingField('connection_state_notifications', value),
 })
 
 const driverReadinessLabel = computed(() => {
@@ -479,6 +499,7 @@ function resetConfigAction() {
   ui.requestConfirm('此操作会清空所有 VPN 配置，是否继续？', async () => {
     try {
       await config.resetConfig(true)
+      ui.resetQuickStartDismissal()
       await resetClosePreference()
       ui.addToast('配置已重置', 'success')
       emit('reloadSettings')
@@ -566,6 +587,30 @@ onMounted(() => {
           v-model="startupAutoConnectModel"
           :disabled="!startupAutoConnectAllowed && !settingsForm.auto_connect_on_launch"
         />
+      </div>
+
+      <div v-if="isDesktop" class="flex items-center justify-between rounded-lg border border-border bg-bg/40 px-4 py-3">
+        <div>
+          <p class="text-sm text-foreground">连接后缩小到托盘区</p>
+          <p class="text-xs text-muted">连接建立后自动隐藏窗口，托盘菜单仍可显示或断开连接。</p>
+        </div>
+        <ToggleSwitch v-model="minimizeToTrayOnConnectModel" />
+      </div>
+
+      <div v-if="isDesktop" class="flex items-center justify-between rounded-lg border border-border bg-bg/40 px-4 py-3">
+        <div>
+          <p class="text-sm text-foreground">静默启动</p>
+          <p class="text-xs text-muted">首次启动进程时不显示主窗口；托盘或再次运行仍会显示。</p>
+        </div>
+        <ToggleSwitch v-model="silentStartupModel" />
+      </div>
+
+      <div v-if="isDesktop" class="flex items-center justify-between rounded-lg border border-border bg-bg/40 px-4 py-3">
+        <div>
+          <p class="text-sm text-foreground">连接状态系统通知</p>
+          <p class="text-xs text-muted">连接成功或断开连接时发送系统通知。</p>
+        </div>
+        <ToggleSwitch v-model="connectionStateNotificationsModel" />
       </div>
 
       <div v-if="isDesktop" class="flex flex-col gap-3 rounded-lg border border-border bg-bg/40 px-4 py-3 md:flex-row md:items-center md:justify-between">
@@ -765,7 +810,7 @@ onMounted(() => {
                 >
                   <option value="auto">自动（优先 Wintun）</option>
                   <option value="wintun">Wintun</option>
-                  <option value="tap">TAP</option>
+                  <option value="tap" disabled>TAP（后端未接入）</option>
                 </select>
               </div>
 
@@ -801,6 +846,7 @@ onMounted(() => {
               <div class="rounded-lg border border-border bg-bg p-4">
                 <div class="mb-2 flex items-center gap-2">
                   <p class="text-xs text-muted">TAP</p>
+                  <span class="rounded bg-warning/10 px-2 py-0.5 text-xs text-warning">后端未接入</span>
                   <span v-if="config.driverStatus?.tap_available" class="rounded bg-success/10 px-2 py-0.5 text-xs text-success">已安装</span>
                   <span v-else-if="config.driverStatus?.tap_can_install" class="rounded bg-warning/10 px-2 py-0.5 text-xs text-warning">可安装</span>
                   <span v-else class="rounded bg-red-500/10 px-2 py-0.5 text-xs text-red-400">不可用</span>
@@ -810,6 +856,9 @@ onMounted(() => {
                 </p>
                 <p v-if="tapMissing && config.driverStatus?.tap_recommended_action" class="mt-2 text-xs text-warning/80">
                   {{ config.driverStatus.tap_recommended_action }}
+                </p>
+                <p class="mt-2 text-xs text-warning/80">
+                  TAP 后端未接入 native 引擎；安装 TAP 目前不能让 EXV 通过 TAP 建立连接。
                 </p>
               </div>
             </div>
@@ -824,7 +873,8 @@ onMounted(() => {
                 {{ busyDriver === 'wintun' ? '准备中...' : '准备 Wintun' }}
               </button>
               <button
-                :disabled="busyDriver === 'tap'"
+                :disabled="busyDriver === 'tap' || !tapNativeBackendImplemented"
+                title="TAP 后端未接入 native 引擎，安装驱动不会让当前连接路径可用"
                 class="flex items-center gap-2 rounded-lg border border-border px-4 py-2 text-sm text-foreground transition-colors hover:border-accent/50 disabled:opacity-50"
                 @click="installDriver('tap')"
               >

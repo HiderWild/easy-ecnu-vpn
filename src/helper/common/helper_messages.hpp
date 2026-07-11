@@ -191,6 +191,8 @@ struct AcquireCoreLeaseResponse {
     bool accepted = false;
     std::string lease_id;
     std::string mode;
+    std::string error_code;
+    std::string error_message;
 };
 
 struct KeepAliveRequest {

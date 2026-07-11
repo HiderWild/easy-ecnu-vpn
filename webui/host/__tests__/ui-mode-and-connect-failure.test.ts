@@ -18,8 +18,11 @@ const appText = readSource('src', 'App.vue')
 const vpnStoreText = readSource('src', 'stores', 'vpn.ts')
 const uiStoreText = readSource('src', 'stores', 'ui.ts')
 const dashboardPageText = readSource('src', 'pages', 'DashboardPage.vue')
+const dashboardVisualText = readSource('src', 'components', 'dashboard', 'DashboardVisualStage.vue')
 const logsPageText = readSource('src', 'pages', 'LogsPage.vue')
 const minimalModeViewText = readSource('src', 'components', 'MinimalModeView.vue')
+const appWindowFrameText = readSource('src', 'components', 'AppWindowFrame.vue')
+const modeSegmentedControlText = readSource('src', 'components', 'ModeSegmentedControl.vue')
 const modalShellText = readSource('src', 'components', 'ModalShell.vue')
 const hostApiText = readSource('src', 'api', 'host.ts')
 const navBarText = readSource('src', 'components', 'NavBar.vue')
@@ -239,9 +242,10 @@ function interfacePropertyNames(text: string, interfaceName: string) {
 }
 
 describe('frontend-owned UI mode state', () => {
-  it('keeps only minimal mode in renderer localStorage', () => {
+  it('keeps renderer-only UI preferences in localStorage', () => {
     const literals = stringLiterals(configStoreText)
     assert.ok(literals.includes('exv:minimal-mode'))
+    assert.ok(literals.includes('exv:minimize-to-tray-on-connect'))
     assert.equal(literals.includes('exv:service-install-prompt-seen'), false)
     assert.ok(hasPropertyCall(configStoreText, 'getItem'))
     assert.ok(hasPropertyCall(configStoreText, 'setItem'))
@@ -254,12 +258,29 @@ describe('frontend-owned UI mode state', () => {
   it('sends service prompt config fields through core-owned settings unchanged', () => {
     const deleted = deletePropertyNames(configStoreText)
     assert.ok(deleted.has('minimal_mode'))
+    assert.ok(deleted.has('minimize_to_tray_on_connect'))
+    assert.equal(deleted.has('dtls_mode'), false)
     assert.equal(deleted.has('service_install_prompt_seen'), false)
     assert.ok(hasObjectKeysLengthZeroReturn(configStoreText, 'remoteSettings'))
   })
 
+  it('hides to tray only after a real connect flow reaches connected', () => {
+    assert.match(configStoreText, /minimize_to_tray_on_connect: boolean/)
+    assert.match(vpnStoreText, /const connectShouldHideToTray = ref\(false\)/)
+    assert.match(vpnStoreText, /connectShouldHideToTray\.value = true/)
+    assert.match(vpnStoreText, /function maybeHideToTrayAfterConnect\(nextStatus: VpnStatus\)/)
+    assert.match(vpnStoreText, /config\.settings\.minimize_to_tray_on_connect/)
+    assert.match(vpnStoreText, /window\.exv\?\.window\?\.hideToTray/)
+    const fetchStatusStart = vpnStoreText.indexOf('async function fetchStatus')
+    assert.notEqual(fetchStatusStart, -1)
+    const fetchStatusEnd = vpnStoreText.indexOf('function withTimeout', fetchStatusStart)
+    assert.notEqual(fetchStatusEnd, -1)
+    const fetchStatusBlock = vpnStoreText.slice(fetchStatusStart, fetchStatusEnd)
+    assert.doesNotMatch(fetchStatusBlock, /connectShouldHideToTray\.value = true/)
+  })
+
   it('suppresses stale asynchronous window mode writes after rapid toggles', () => {
-    const frameText = readSource('src', 'components', 'AppWindowFrame.vue')
+    const frameText = appWindowFrameText
     assert.ok(frameText.includes('windowModeRequest'))
     assert.ok(frameText.includes('resizeForMode'))
     assert.ok(frameText.includes('transitionPhase'))
@@ -271,19 +292,36 @@ describe('frontend-owned UI mode state', () => {
     assert.ok(frameText.includes('POST_RESIZE_SETTLE_MS'))
   })
 
+  it('keeps theme and UI mode controls in the titlebar instead of page content', () => {
+    assert.match(appWindowFrameText, /TitlebarThemeModeControl/)
+    assert.match(appWindowFrameText, /ModeSegmentedControl/)
+    assert.match(appWindowFrameText, /app-window-titlebar__toolbar/)
+    assert.match(appWindowFrameText, /theme\.setThemeMode/)
+    assert.match(appWindowFrameText, /handleTitlebarModeChange/)
+    assert.match(appWindowFrameText, /:icon-only="visualMode === 'minimal'"/)
+
+    assert.match(modeSegmentedControlText, /import \{ Expand, Shrink \} from 'lucide-vue-next'/)
+    assert.doesNotMatch(modeSegmentedControlText, /Maximize2|Minimize2/)
+    assert.match(modeSegmentedControlText, /iconOnly\?: boolean/)
+
+    assert.doesNotMatch(dashboardPageText, /<ModeSegmentedControl/)
+    assert.doesNotMatch(minimalModeViewText, /<ModeSegmentedControl/)
+    assert.doesNotMatch(minimalModeViewText, /minimal-shell__mode/)
+  })
+
   it('draws a stable one-pixel border around the native window surface', () => {
-    const frameText = readSource('src', 'components', 'AppWindowFrame.vue')
+    const frameText = appWindowFrameText
     assert.ok(frameText.includes('--app-window-border-color'))
     assert.match(frameText, /border:\s*1px solid var\(--app-window-border-color\)/)
     assert.match(frameText, /box-sizing:\s*border-box/)
   })
 
   it('aligns the native window contour to the physical window edge', () => {
-    const frameText = readSource('src', 'components', 'AppWindowFrame.vue')
+    const frameText = appWindowFrameText
     const shadowDeclaration = frameText.match(/--app-window-shadow:\s*([\s\S]*?);/)?.[1] ?? ''
     assert.ok(frameText.includes('--app-window-shadow'))
     assert.ok(frameText.includes('--app-window-shadow-margin'))
-    assert.match(frameText, /--window-radius:\s*8px/)
+    assert.match(frameText, /--window-radius:\s*12px/)
     assert.match(frameText, /--app-window-shadow-margin:\s*0px/)
     assert.match(frameText, /--app-window-shadow-margin-total:\s*0px/)
     assert.match(frameText, /padding:\s*var\(--app-window-shadow-margin\)/)
@@ -320,6 +358,74 @@ describe('frontend-owned UI mode state', () => {
     assert.match(modalShellText, /\.modal-shell__panel--compact\s+\.modal-shell__actions\s+button\s*\{[\s\S]*white-space:\s*nowrap/)
     assert.match(modalShellText, /@media \(max-width: 360px\), \(max-height: 180px\)[\s\S]*\.modal-shell__panel--compact \.modal-shell__actions button\s*\{[\s\S]*flex:\s*0 0 auto/)
   })
+
+  it('keeps the minimal top status concise and vertically balanced', () => {
+    assert.doesNotMatch(minimalModeViewText, /minimal-shell__status-detail/)
+    assert.doesNotMatch(minimalModeViewText, /临时授权连接|连接前安装服务/)
+    assert.doesNotMatch(minimalModeViewText, /minimal-shell__topline/)
+    assert.match(minimalModeViewText, /minimal-shell__status-stack/)
+    assert.match(minimalModeViewText, /\.minimal-shell__body\s*\{[\s\S]*grid-template-columns:\s*4\.15rem minmax\(0,\s*1fr\)/)
+  })
+
+  it('keeps minimal activity chrome within the compact window height budget', () => {
+    const compactContentHeightPx = 102
+    const rootRemPx = 16
+    const shellChromePx = (0.42 + 0.1) * rootRemPx
+    const disconnectedFormPx = (1.56 + 0.38 + 1.56) * rootRemPx
+    const powerButtonWithStatusPx = (0.75 + 0.32 + 2.72) * rootRemPx
+
+    assert.match(minimalModeViewText, /\.minimal-shell\s*\{[\s\S]*grid-template-rows:\s*minmax\(0,\s*1fr\) auto/)
+    assert.match(minimalModeViewText, /\.minimal-shell\s*\{[\s\S]*padding:\s*0\.42rem 0\.62rem 0\.16rem/)
+    assert.match(minimalModeViewText, /\.minimal-shell__activity\s*\{[\s\S]*height:\s*0\.1rem/)
+    assert.match(minimalModeViewText, /\.minimal-power-button\s*\{[\s\S]*width:\s*2\.72rem;[\s\S]*height:\s*2\.72rem/)
+    assert.match(minimalModeViewText, /:deep\(\.minimal-shell__input\)\s*\{[\s\S]*height:\s*1\.56rem/)
+    assert.match(minimalModeViewText, /\.minimal-shell__utility\s*\{[\s\S]*height:\s*1\.56rem/)
+    assert.match(minimalModeViewText, /\.minimal-shell__field-row \+ \.minimal-shell__field-row\s*\{[\s\S]*margin-top:\s*0\.2rem/)
+    assert.doesNotMatch(minimalModeViewText, /minimal-shell__mode/)
+    assert.ok(
+      compactContentHeightPx - shellChromePx >= Math.max(disconnectedFormPx, powerButtonWithStatusPx),
+      '102px minimal content area should leave enough body height for the form and power button',
+    )
+  })
+
+  it('places the minimal service control above remember after the titlebar frees vertical space', () => {
+    const serviceIndex = minimalModeViewText.indexOf('minimal-shell__utility minimal-shell__utility--service')
+    const rememberIndex = minimalModeViewText.indexOf('minimal-shell__utility minimal-shell__utility--remember')
+    const usernameIndex = minimalModeViewText.indexOf('placeholder="用户名"')
+    const passwordIndex = minimalModeViewText.indexOf('placeholder="密码"')
+
+    assert.notEqual(serviceIndex, -1)
+    assert.notEqual(rememberIndex, -1)
+    assert.notEqual(usernameIndex, -1)
+    assert.notEqual(passwordIndex, -1)
+    assert.ok(usernameIndex < serviceIndex, 'service control should sit on the username row')
+    assert.ok(serviceIndex < passwordIndex, 'service control should appear before password row')
+    assert.ok(passwordIndex < rememberIndex, 'remember control should sit on the password row')
+  })
+
+  it('uses a soft center-weighted minimal activity beam', () => {
+    const beamRule = minimalModeViewText.match(/\.minimal-activity-beam\s*\{[\s\S]*?\n\}/)?.[0] ?? ''
+
+    assert.match(minimalModeViewText, /<span\s+class="minimal-activity-beam"\s*\/>/)
+    assert.match(beamRule, /linear-gradient\(90deg,\s*transparent 0%/)
+    assert.match(beamRule, /rgb\(var\(--color-accent-rgb\) \/ 0\.82\) 50%/)
+    assert.match(beamRule, /transparent 100%/)
+    assert.match(minimalModeViewText, /filter:\s*blur\(0\.5px\)/)
+    assert.match(
+      minimalModeViewText,
+      /\.minimal-shell\.is-connecting \.minimal-activity-beam,\s*\.minimal-shell\.is-disconnecting \.minimal-activity-beam\s*\{[\s\S]*animation:\s*minimal-activity-flow 2\.4s ease-in-out infinite;/,
+    )
+    assert.match(
+      minimalModeViewText,
+      /\.minimal-shell\.is-connected \.minimal-activity-beam\s*\{[\s\S]*animation:\s*minimal-activity-drift 8\.5s ease-in-out infinite;/,
+    )
+    assert.match(
+      minimalModeViewText,
+      /@media \(prefers-reduced-motion: reduce\)\s*\{\s*\.minimal-activity-beam\s*\{[\s\S]*animation:\s*none !important;/,
+    )
+    assert.doesNotMatch(minimalModeViewText, /\.minimal-shell__activity\s+span/)
+    assert.doesNotMatch(minimalModeViewText, /width:\s*30%/)
+  })
 })
 
 describe('connection failure presentation contract', () => {
@@ -329,6 +435,9 @@ describe('connection failure presentation contract', () => {
     assert.ok(statusFields.has('error_code'))
     assert.ok(statusFields.has('error_recoverable'))
     assert.ok(statusFields.has('last_error'))
+    assert.ok(statusFields.has('dtls_state'))
+    assert.ok(statusFields.has('active_data_channel'))
+    assert.ok(statusFields.has('dtls_fallback_reason'))
     assert.match(vpnStoreText, /function isTerminalConnectStatus\(nextStatus: VpnStatus\)/)
     assert.match(vpnStoreText, /connectInFlight\.value && isTerminalConnectStatus\(nextStatus\)/)
     assert.match(vpnStoreText, /nextStatus\.connected/)
@@ -356,6 +465,95 @@ describe('connection failure presentation contract', () => {
     assert.ok(contractErrors.has('connection_attempt_active'))
 
     assert.ok(hasGuardedSetError(vpnStoreText, 'user_cancelled'))
+  })
+
+  it('keeps runtime monitoring alive after startup and reports post-connect failures', () => {
+    assert.match(vpnStoreText, /const runtimeStatusPollTimer = ref<ReturnType<typeof setInterval> \| null>\(null\)/)
+    assert.match(vpnStoreText, /const runtimeHadConnectedSession = ref\(false\)/)
+    assert.match(vpnStoreText, /const runtimeDisconnectErrorKey = ref<string \| null>\(null\)/)
+    assert.match(vpnStoreText, /function normalizedPhase\(nextStatus: VpnStatus\)/)
+    assert.match(vpnStoreText, /function shouldKeepRuntimeStatusMonitoring\(nextStatus: VpnStatus\)/)
+    assert.match(vpnStoreText, /function statusErrorForRuntimeDisconnect\(nextStatus: VpnStatus\)/)
+    assert.match(vpnStoreText, /function startRuntimeStatusMonitoring\(\)/)
+    assert.match(vpnStoreText, /function stopRuntimeStatusMonitoring\(\)/)
+
+    const applyStatusStart = vpnStoreText.indexOf('function applyStatus')
+    assert.notEqual(applyStatusStart, -1)
+    const applyStatusEnd = vpnStoreText.indexOf('function updateStatusFromEvent', applyStatusStart)
+    assert.notEqual(applyStatusEnd, -1)
+    const applyStatusBlock = vpnStoreText.slice(applyStatusStart, applyStatusEnd)
+
+    assert.match(applyStatusBlock, /runtimeHadConnectedSession\.value = true/)
+    assert.match(applyStatusBlock, /startRuntimeStatusMonitoring\(\)/)
+    assert.match(applyStatusBlock, /stopRuntimeStatusMonitoring\(\)/)
+    assert.match(applyStatusBlock, /shouldKeepRuntimeStatusMonitoring\(nextStatus\)/)
+    assert.match(applyStatusBlock, /const runtimeError = statusErrorForRuntimeDisconnect\(nextStatus\)/)
+    assert.match(applyStatusBlock, /setError\(normalizeError\(\{/)
+    assert.match(applyStatusBlock, /runtimeDisconnectErrorKey\.value = null/)
+    assert.match(applyStatusBlock, /phase === 'reconnecting'/)
+  })
+
+  it('routes broken installed helper service errors to repair instead of retry', () => {
+    const errorTypes = unionStringMembers(vpnStoreText, 'VpnErrorType')
+    const serviceStatusFields = interfacePropertyNames(vpnStoreText, 'ServiceStatus')
+    assert.ok(errorTypes.has('helper_unavailable'))
+    for (const field of [
+      'health',
+      'diagnostic_code',
+      'last_start_api',
+      'last_start_native_error',
+      'consecutive_start_failures',
+      'start_suppressed',
+      'start_retry_after_ms',
+      'recommended_action',
+    ]) {
+      assert.ok(serviceStatusFields.has(field), `ServiceStatus missing ${field}`)
+    }
+
+    assert.match(vpnStoreText, /service_installed_not_running:\s*\{[\s\S]*error_type:\s*'helper_unavailable'/)
+    assert.match(vpnStoreText, /service_installed_not_running:\s*\{[\s\S]*recommended_action:\s*'repair_service'/)
+    assert.match(vpnStoreText, /core_lease_conflict:\s*\{[\s\S]*error_type:\s*'helper_unavailable'/)
+    assert.match(vpnStoreText, /core_lease_conflict:\s*\{[\s\S]*recommended_action:\s*'repair_service'/)
+    assert.match(vpnStoreText, /core_lease_unauthorized:\s*\{[\s\S]*error_type:\s*'helper_unavailable'/)
+    assert.match(vpnStoreText, /core_lease_unauthorized:\s*\{[\s\S]*recommended_action:\s*'repair_service'/)
+    assert.match(vpnStoreText, /helper_hello_disconnected:\s*\{[\s\S]*error_type:\s*'helper_unavailable'/)
+    assert.match(vpnStoreText, /helper_hello_disconnected:\s*\{[\s\S]*recommended_action:\s*'repair_service'/)
+    assert.match(vpnStoreText, /helper_hello_failed:\s*\{[\s\S]*error_type:\s*'helper_unavailable'/)
+    assert.match(vpnStoreText, /helper_hello_failed:\s*\{[\s\S]*recommended_action:\s*'repair_service'/)
+    assert.match(
+      vpnStoreText,
+      /case 'helper_unavailable':[\s\S]*label:\s*'尝试修复服务'[\s\S]*repairService\(\)/,
+    )
+    assert.match(
+      vpnStoreText,
+      /case 'helper_unavailable':[\s\S]*title:\s*'辅助服务不可用'[\s\S]*primaryLabel:\s*'尝试修复服务'[\s\S]*repairService\(\)/,
+    )
+
+    const presentationStart = vpnStoreText.indexOf("case 'helper_unavailable':", vpnStoreText.indexOf('function errorPresentation'))
+    const presentationEnd = vpnStoreText.indexOf("case 'utun_permission_denied':", presentationStart)
+    assert.notEqual(presentationStart, -1)
+    assert.notEqual(presentationEnd, -1)
+    const helperPresentationBlock = vpnStoreText.slice(presentationStart, presentationEnd)
+    assert.doesNotMatch(helperPresentationBlock, /primaryLabel:\s*'重试'/)
+  })
+
+  it('clears stale connection errors when status becomes connected', () => {
+    const applyStatusStart = vpnStoreText.indexOf('function applyStatus')
+    assert.notEqual(applyStatusStart, -1)
+    const applyStatusEnd = vpnStoreText.indexOf('function updateStatusFromEvent', applyStatusStart)
+    assert.notEqual(applyStatusEnd, -1)
+    const applyStatusBlock = vpnStoreText.slice(applyStatusStart, applyStatusEnd)
+
+    const connectedStart = applyStatusBlock.indexOf('if (nextStatus.connected)')
+    assert.notEqual(connectedStart, -1)
+    const connectTerminalStart = applyStatusBlock.indexOf(
+      'if (connectInFlight.value && isTerminalConnectStatus(nextStatus))',
+      connectedStart,
+    )
+    assert.notEqual(connectTerminalStart, -1)
+    const connectedBlock = applyStatusBlock.slice(connectedStart, connectTerminalStart)
+
+    assert.match(connectedBlock, /clearError\(\)/)
   })
 
   it('routes the in-progress yellow button to cancellation instead of a second connect', () => {
@@ -421,7 +619,107 @@ describe('connection failure presentation contract', () => {
 
     assert.match(connectFromDashboardBlock, /const shouldInstallService = installServiceFirst && !serviceInstalled\.value && !serviceAvailable\.value/)
     assert.match(connectFromDashboardBlock, /if \(shouldInstallService\)/)
+    assert.match(connectFromDashboardBlock, /if \(serviceInstalled\.value && !serviceAvailable\.value\) \{[\s\S]*await repairService\(\)[\s\S]*await fetchServiceStatus\(\)[\s\S]*if \(serviceAvailable\.value\)/)
+    assert.match(connectFromDashboardBlock, /if \(canUseElevatedFallback\.value\) \{[\s\S]*connectElevated\(\)/)
     assert.doesNotMatch(connectFromDashboardBlock, /if \(installServiceFirst\)/)
+  })
+})
+
+describe('structured connection progress contract', () => {
+  it('exposes structured progress stages for the dashboard and future visuals', () => {
+    const progressStates = unionStringMembers(vpnStoreText, 'ConnectProgressStepState')
+    for (const state of ['pending', 'active', 'done', 'failed', 'skipped']) {
+      assert.ok(progressStates.has(state), `missing progress state ${state}`)
+    }
+
+    const stageFields = interfacePropertyNames(vpnStoreText, 'ConnectionProgressStage')
+    for (const field of ['key', 'label', 'description', 'state', 'priority', 'visual', 'source']) {
+      assert.ok(stageFields.has(field), `ConnectionProgressStage should expose ${field}`)
+    }
+    assert.match(vpnStoreText, /type ConnectionProgressStageSource\s*=\s*'backend'\s*\|\s*'local'/)
+    assert.match(vpnStoreText, /const connectionProgressSteps = computed<ConnectionProgressStage\[\]>/)
+    assert.match(vpnStoreText, /connectionProgressSteps,/)
+  })
+
+  it('localizes known backend progress steps before they reach UI text', () => {
+    assert.match(vpnStoreText, /connectProgressStepCopy/)
+    for (const copy of [
+      '准备连接',
+      '接受连接请求并确认本次连接流程',
+      '准备 helper',
+      '启动或连接本地辅助进程',
+      '完成认证',
+      '提交凭据并完成网关认证',
+      '连接 VPN 服务器',
+      '建立到 VPN 网关的加密通道',
+      '准备虚拟网卡',
+      '创建或打开 EXV 隧道接口',
+      '写入网络配置',
+      '应用地址、DNS 和路由策略',
+      '启动数据转发',
+      '启动隧道数据包转发',
+      '确认连接可用',
+      '等待连接进入可用状态',
+    ]) {
+      assert.ok(vpnStoreText.includes(copy), `missing localized copy: ${copy}`)
+    }
+  })
+
+  it('normalizes backend progress with stable priority sorting and current-step selection', () => {
+    assert.match(vpnStoreText, /function normalizeBackendConnectionProgressSteps\(/)
+    assert.match(vpnStoreText, /originalIndex/)
+    assert.match(vpnStoreText, /a\.step\.priority - b\.step\.priority/)
+    assert.match(vpnStoreText, /a\.originalIndex - b\.originalIndex/)
+
+    assert.match(vpnStoreText, /function selectConnectionProgressStage\(/)
+    assert.match(vpnStoreText, /activeKey/)
+    assert.match(vpnStoreText, /step\.key === activeKey/)
+    assert.match(vpnStoreText, /step\.state === 'active'/)
+    assert.match(vpnStoreText, /step\.state === 'failed'/)
+    assert.match(vpnStoreText, /step\.state === 'done' \|\| step\.state === 'skipped'/)
+  })
+
+  it('keeps the local timed fallback while preferring backend progress when available', () => {
+    assert.match(vpnStoreText, /const localConnectionProgressSteps = computed<ConnectionProgressStage\[\]>/)
+    assert.match(vpnStoreText, /source:\s*'local'/)
+    assert.match(vpnStoreText, /connectionProgressStageOffset\.value \+ elapsedStage/)
+    assert.match(vpnStoreText, /state:\s*index === activeStageIndex \? 'active'/)
+    assert.match(vpnStoreText, /status\.value\?\.connect_progress\?\.steps/)
+    assert.match(vpnStoreText, /normalizeBackendConnectionProgressSteps\(progress\.steps\)/)
+    assert.match(vpnStoreText, /connectionProgressSteps\.value/)
+  })
+
+  it('preserves structured progress across partial status events', () => {
+    const updateStatusStart = vpnStoreText.indexOf('function updateStatusFromEvent')
+    assert.notEqual(updateStatusStart, -1)
+    const updateStatusEnd = vpnStoreText.indexOf('const connectionProgress', updateStatusStart)
+    assert.notEqual(updateStatusEnd, -1)
+    const updateStatusBlock = vpnStoreText.slice(updateStatusStart, updateStatusEnd)
+
+    assert.match(updateStatusBlock, /\.\.\.status\.value,\s*\.\.\.partialStatus/)
+    assert.doesNotMatch(vpnStoreText, /delete\s+[^;\n]*connect_progress/)
+    assert.doesNotMatch(vpnStoreText, /connect_progress:\s*undefined/)
+  })
+
+  it('treats full core status events as authoritative snapshots', () => {
+    const fullSnapshotStart = vpnStoreText.indexOf('function isFullStatusSnapshot')
+    assert.notEqual(fullSnapshotStart, -1)
+    const reconcileStart = vpnStoreText.indexOf('function reconcileAuthoritativeStatusEvent')
+    assert.notEqual(reconcileStart, -1)
+    const updateStatusStart = vpnStoreText.indexOf('function updateStatusFromEvent')
+    assert.notEqual(updateStatusStart, -1)
+    const updateStatusEnd = vpnStoreText.indexOf('const connectionProgress', updateStatusStart)
+    assert.notEqual(updateStatusEnd, -1)
+    const updateStatusBlock = vpnStoreText.slice(updateStatusStart, updateStatusEnd)
+
+    assert.match(vpnStoreText, /typeof data\.connected === 'boolean'/)
+    assert.match(vpnStoreText, /typeof data\.process_running === 'boolean'/)
+    assert.match(vpnStoreText, /typeof data\.phase === 'string'/)
+    assert.match(vpnStoreText, /disconnectInFlight\.value &&[\s\S]*phase === 'idle'[\s\S]*disconnectInFlight\.value = false/)
+    assert.match(vpnStoreText, /fullyDisconnected = !nextStatus\.connected && !nextStatus\.process_running/)
+    assert.match(vpnStoreText, /connectInFlight\.value && connectTerminal[\s\S]*connectInFlight\.value = false/)
+    assert.match(updateStatusBlock, /const fullSnapshot = isFullStatusSnapshot\(partialStatus\)/)
+    assert.match(updateStatusBlock, /if \(fullSnapshot\) \{[\s\S]*reconcileAuthoritativeStatusEvent\(nextStatus\)/)
   })
 })
 
@@ -440,16 +738,48 @@ describe('desktop log transport contract', () => {
     assert.match(hostApiText, /get<T = unknown>\(path: string,\s*options\?:/)
     assert.match(hostApiText, /logs\.list\(plainPayload\(options\?\.params/)
   })
+
+  it('filters logs by selected severity for visible, copied, and exported logs', () => {
+    const logsScript = vueScriptSetup(logsPageText)
+    const pageStateText = readSource('src', 'stores', 'pageState.ts')
+
+    assert.match(pageStateText, /levelFilter:\s*'all'/)
+    assert.match(logsScript, /type LogLevelFilter = 'all' \| 'warn_error' \| 'error'/)
+    assert.match(logsScript, /const logLevelFilter = ref<LogLevelFilter>/)
+    assert.match(logsScript, /function isWarningOrErrorLog\(entry: LogEntry\)/)
+    assert.match(logsScript, /function logMatchesFilter\(entry: LogEntry\)/)
+    assert.match(logsScript, /logLevelFilter\.value === 'warn_error'/)
+    assert.match(logsScript, /logLevelFilter\.value === 'error'/)
+    assert.match(logsPageText, /<select[\s\S]*v-model="logLevelFilter"/)
+    assert.match(logsPageText, /全部显示/)
+    assert.match(logsPageText, /仅警告和错误/)
+    assert.match(logsPageText, /仅错误/)
+
+    const downloadLogsStart = logsScript.indexOf('function downloadLogs()')
+    assert.notEqual(downloadLogsStart, -1)
+    const downloadLogsEnd = logsScript.indexOf('function copyTextFallback', downloadLogsStart)
+    assert.notEqual(downloadLogsEnd, -1)
+    const downloadLogsBlock = logsScript.slice(downloadLogsStart, downloadLogsEnd)
+    assert.match(downloadLogsBlock, /formatLogs\(visibleLogs\.value\)/)
+
+    const copyLogsStart = logsScript.indexOf('async function copyLogs()')
+    assert.notEqual(copyLogsStart, -1)
+    const copyLogsEnd = logsScript.indexOf('watch\(', copyLogsStart)
+    assert.notEqual(copyLogsEnd, -1)
+    const copyLogsBlock = logsScript.slice(copyLogsStart, copyLogsEnd)
+    assert.match(copyLogsBlock, /formatLogs\(visibleLogs\.value\)/)
+  })
 })
 
 describe('dashboard virtual network topology contract', () => {
   it('keeps upstream virtual adapter detection on the dashboard while hiding disconnected sidebar details', () => {
     assert.doesNotMatch(dashboardPageText, /network-probe-strip/)
     assert.match(dashboardPageText, /DashboardVisualStage/)
-    assert.match(dashboardPageText, /networkProbeSummary/)
     assert.match(dashboardPageText, /routePolicyDescription/)
-    assert.match(dashboardPageText, /hasUpstreamVirtual/)
-    assert.match(dashboardPageText, /vpn\.status\?\.upstream_virtual_detected/)
+    assert.match(dashboardPageText, /vpn\.upstreamVirtualDetected/)
+    assert.match(dashboardPageText, /vpn\.upstreamVirtualLabel/)
+    assert.match(dashboardPageText, /:proxy-tun-label="proxyTunLabel"/)
+    assert.match(dashboardVisualText, /代理 TUN/)
     assert.doesNotMatch(dashboardPageText, /tooltip:\s*upstreamVirtualTooltip\.value/)
     assert.doesNotMatch(dashboardPageText, /:title="node\.tooltip \|\| node\.title"/)
     assert.match(navBarText, /showSidebarStatusDetails\s*=\s*computed\(\(\) => Boolean\(vpn\.status\?\.connected\)\)/)

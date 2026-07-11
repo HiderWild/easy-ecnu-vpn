@@ -34,10 +34,11 @@ struct BackendResolverDeps {
   std::function<ServiceStatusSnapshot()> current_service_status;
   std::function<OneshotBackend(const OneshotBootstrapRequest &)>
       start_oneshot_helper;
-  // Attempt to start an installed-but-not-running helper service. Returns true
-  // if the start command was accepted (the caller re-probes status afterward).
+  // Attempt to start an installed-but-not-running helper service. Returns
+  // accepted=true if the start command was accepted (the caller re-probes
+  // status afterward).
   // May be empty when service-start is not supported in the current context.
-  std::function<bool()> try_start_service;
+  std::function<ServiceStartResult()> try_start_service;
 };
 
 nlohmann::json resolve_backend(const BackendResolveOptions &options);

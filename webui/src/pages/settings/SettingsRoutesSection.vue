@@ -24,6 +24,7 @@ const routeMessage = ref<{ text: string } | null>(null)
 const fallbackSettingsDraft: SettingsConfig = {
   mtu: 1400,
   dtls: true,
+  dtls_mode: 'auto',
   extra_args: '',
   log_path: '',
   webui_port: 18080,
@@ -33,14 +34,17 @@ const fallbackSettingsDraft: SettingsConfig = {
   windows_tunnel_driver: 'auto',
   windows_tap_interface: '',
   auto_reconnect: true,
-  retry_limit: -1,
+  retry_limit: 0,
   minimal_mode: false,
   service_install_prompt_seen: false,
   minimal_install_service_before_connect: true,
+  minimize_to_tray_on_connect: false,
   include_class_a_private_routes: false,
   include_class_b_private_routes: false,
   launch_at_login: false,
   auto_connect_on_launch: false,
+  silent_startup: false,
+  connection_state_notifications: false,
 }
 
 const settingsForm = computed(() => props.settingsDraft ?? fallbackSettingsDraft)
@@ -135,7 +139,7 @@ onMounted(() => {
           @change="updateSettingField('include_class_b_private_routes', ($event.target as HTMLInputElement).checked)"
         />
         <span>
-          <span class="block text-sm font-medium text-foreground">处理所有 B 类内网地址</span>
+          <span class="block text-sm font-medium text-foreground">处理所有 B 类内网地址（172.16-172.31 开头）</span>
           <span class="mt-0.5 block text-xs text-muted">连接时添加 172.16.0.0/12 路由。</span>
         </span>
       </label>

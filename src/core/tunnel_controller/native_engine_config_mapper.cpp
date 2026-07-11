@@ -149,10 +149,21 @@ exv::vpn_engine::ValidationResult make_native_engine_config(
   engine_cfg.windows_tunnel_driver = cfg.windows_tunnel_driver;
   engine_cfg.windows_tap_interface = cfg.windows_tap_interface;
   engine_cfg.auto_reconnect = cfg.auto_reconnect;
-  // Native engine is CSTP/TLS-only until a production DTLS backend is added.
-  engine_cfg.disable_dtls = true;
-  if (extra.no_dtls)
+  engine_cfg.retry_limit =
+      exv::config_detail::normalize_retry_limit(cfg.retry_limit);
+  engine_cfg.disable_dtls = cfg.disable_dtls;
+  engine_cfg.dtls_mode =
+      cfg.disable_dtls
+          ? "disabled"
+          : (exv::config_detail::is_valid_dtls_mode(cfg.dtls_mode)
+                 ? cfg.dtls_mode
+                 : "auto");
+  if (engine_cfg.dtls_mode == "disabled")
     engine_cfg.disable_dtls = true;
+  if (extra.no_dtls) {
+    engine_cfg.disable_dtls = true;
+    engine_cfg.dtls_mode = "disabled";
+  }
   if (!extra.useragent.empty())
     engine_cfg.useragent = std::move(extra.useragent);
   engine_cfg.auth_group = std::move(extra.auth_group);

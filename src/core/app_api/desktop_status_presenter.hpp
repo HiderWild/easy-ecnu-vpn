@@ -27,6 +27,7 @@ nlohmann::json driver_status_json(const Config &cfg);
 nlohmann::json install_driver(const Config &cfg, const nlohmann::json &payload);
 nlohmann::json drain_virtual_network_status_events();
 void reset_virtual_network_probe_state_for_testing();
+void expire_virtual_network_probe_cache_for_testing();
 
 } // namespace app_api
 } // namespace exv

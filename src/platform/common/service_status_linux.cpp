@@ -32,14 +32,24 @@ ServiceStatusSnapshot current_service_status() {
   return status;
 }
 
-bool try_start_helper_service() {
+ServiceStartResult try_start_helper_service() {
   const auto &config = helper_platform_config();
   std::string unit = config.service_label;
   if (unit.empty()) {
-    return false;
+    return ServiceStartResult{false, "service_label_missing",
+                              "Helper service label is empty."};
   }
   std::string cmd = "systemctl start " + unit + " >/dev/null 2>&1";
-  return std::system(cmd.c_str()) == 0;
+  const int result = std::system(cmd.c_str());
+  if (result == 0) {
+    return ServiceStartResult{true};
+  }
+  ServiceStartResult out;
+  out.accepted = false;
+  out.code = "service_start_failed";
+  out.message = "systemctl start failed.";
+  out.native_code = result;
+  return out;
 }
 
 } // namespace platform

@@ -12,6 +12,7 @@
 #include "vpn_engine/native_handshake_job.hpp"
 
 #include <chrono>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -48,6 +49,10 @@ struct TunnelController::Impl {
   void notify_status();
   void set_error(const ErrorInfo &error);
   void clear_error();
+  bool helper_control_plane_loss_is_degradable() const;
+  bool clear_helper_control_plane_error();
+  void mark_helper_control_plane_degraded(const std::string &reason,
+                                          const std::string &detail);
 
   void start_heartbeat();
   void stop_heartbeat();
@@ -82,9 +87,11 @@ struct TunnelController::Impl {
   void do_disconnect(DisconnectReason reason);
   void shutdown_helper_session_for_cleanup();
   void cleanup_after_failed_startup();
+  void cleanup_after_recovery_request(const std::string &reason);
   void do_cleanup();
 
   void attempt_reconnect(const ErrorInfo &error);
+  void request_recovery(const std::string &reason, const ErrorInfo &error);
 
   void on_helper_ready();
   void on_auth_succeeded();
@@ -104,12 +111,16 @@ struct TunnelController::Impl {
 
   std::shared_ptr<exv::helper::HelperClient> helper_;
   std::shared_ptr<exv::platform::PlatformNetworkOps> net_ops_;
+  std::uint64_t runtime_epoch_ = 0;
+  std::uint64_t controller_id_ = 0;
 
+  ReconnectConfig reconnect_config_;
   ReconnectPolicy reconnect_policy_;
   TunnelPhase phase_ = TunnelPhase::Idle;
   UserIntent intent_;
   TunnelStatusSnapshot snapshot_;
   StatusCallback status_callback_;
+  TunnelController::RecoveryCallback recovery_callback_;
 
   ConnectTiming timing_;
 
@@ -138,6 +149,7 @@ struct TunnelController::Impl {
   CoreSessionRunner runner_;
 
   exv::Config vpn_cfg_;
+  bool vpn_configured_ = false;
   std::string vpn_password_;
   std::optional<PreparedNativeHandshake> prepared_native_handshake_;
 };

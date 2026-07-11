@@ -94,15 +94,32 @@ void TunnelController::Impl::do_core_lease_keepalive() {
             return;
         }
 
-        auto terminate_core_lease_keepalive = [this](const std::string& warning) {
+        auto finish_core_lease_keepalive_failure =
+            [this](const std::string& warning) {
+            const bool degradable =
+                helper_control_plane_loss_is_degradable();
+            mark_helper_control_plane_degraded(
+                "core_lease_keepalive", warning);
+            log_tunnel_event(
+                "WARN", "core_lease.keep_alive.degraded",
+                degradable
+                    ? "Core lease keepalive failed while VPN session can continue"
+                    : "Core lease keepalive failed before VPN session was established",
+                {{"warning", warning},
+                 {"phase", tunnel_phase_wire_name(phase_)},
+                 {"session_active", snapshot_.session_active ? "true" : "false"},
+                 {"network_ready", snapshot_.network_ready ? "true" : "false"},
+                 {"last_error",
+                  snapshot_.last_error.has_value() ? snapshot_.last_error->code
+                                                   : ""}});
+        };
+
+        auto terminate_core_lease_keepalive =
+            [&finish_core_lease_keepalive_failure](const std::string& warning) {
             log_tunnel_event("WARN", "core_lease.keep_alive.failed",
                              "Core lease keepalive response not ok",
                              {{"warning", warning}});
-            core_lease_id_.clear();
-            stop_core_lease_keepalive();
-            helper_status_override_ = "unavailable";
-            update_snapshot();
-            notify_status();
+            finish_core_lease_keepalive_failure(warning);
         };
 
         if (!helper_->is_connected()) {
@@ -124,11 +141,7 @@ void TunnelController::Impl::do_core_lease_keepalive() {
             log_tunnel_event("ERROR", "core_lease.keep_alive.error",
                              "Core lease keepalive send failed",
                              {{"error", e.what()}});
-            core_lease_id_.clear();
-            stop_core_lease_keepalive();
-            helper_status_override_ = "unavailable";
-            update_snapshot();
-            notify_status();
+            finish_core_lease_keepalive_failure(e.what());
             return;
         }
 

@@ -169,6 +169,7 @@ export interface ExvApi {
     setMode(mode: DesktopWindowMode, request?: number): Promise<{ ok: true; mode: DesktopWindowMode }>
     resizeForMode(mode: DesktopWindowMode, request?: number): Promise<{ ok: true; mode: DesktopWindowMode }>
     minimize(): Promise<{ ok: true }>
+    hideToTray(): Promise<{ ok: true }>
     requestClose(): Promise<{ ok: true }>
     resolveClosePrompt(result: unknown): Promise<{ ok: true }>
     getClosePreference(): Promise<{ action: DesktopCloseChoice | null }>
@@ -178,6 +179,7 @@ export interface ExvApi {
   }
   shell: {
     openExternal(url: string): Promise<{ ok: true }>
+    notify?(payload: { title: string; body: string }): Promise<{ ok: true }>
   }
   modal: {
     serviceInstallPrompt(): Promise<DesktopServiceInstallPromptResult>

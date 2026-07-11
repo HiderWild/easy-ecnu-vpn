@@ -53,9 +53,10 @@ const emit = defineEmits<{
 
 <style scoped>
 .dashboard-connection-hero {
+  box-sizing: border-box;
   display: grid;
   min-height: 9.25rem;
-  grid-template-columns: minmax(0, 1fr) 8.5rem;
+  grid-template-columns: minmax(0, 1fr) 11.75rem;
   align-items: center;
   gap: 1rem;
   overflow: hidden;
@@ -73,7 +74,8 @@ const emit = defineEmits<{
   width: 8rem;
   height: 8rem;
   place-items: center;
-  justify-self: end;
+  align-self: center;
+  justify-self: center;
 }
 
 .dashboard-hero__ring.is-connected::before,

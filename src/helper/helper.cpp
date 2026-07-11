@@ -102,7 +102,7 @@ exv::helper::CleanupPolicy full_cleanup_policy() {
 }
 
 bool peer_matches_expected_owner(const IpcServer &ipc,
-                                 const DaemonOptions &options) {
+                                  const DaemonOptions &options) {
   if (!options.oneshot)
     return true;
   if (options.owner.empty())
@@ -117,6 +117,44 @@ bool peer_matches_expected_owner(const IpcServer &ipc,
     return true;
 
   return false;
+}
+
+std::string helper_op_log_name(exv::helper::HelperOp op) {
+  switch (op) {
+  case exv::helper::HelperOp::Hello:
+    return "Hello";
+  case exv::helper::HelperOp::StartSession:
+    return "StartSession";
+  case exv::helper::HelperOp::PrepareTunnelDevice:
+    return "PrepareTunnelDevice";
+  case exv::helper::HelperOp::ApplyTunnelConfig:
+    return "ApplyTunnelConfig";
+  case exv::helper::HelperOp::Heartbeat:
+    return "Heartbeat";
+  case exv::helper::HelperOp::Cleanup:
+    return "Cleanup";
+  case exv::helper::HelperOp::GetSnapshot:
+    return "GetSnapshot";
+  case exv::helper::HelperOp::Shutdown:
+    return "Shutdown";
+  case exv::helper::HelperOp::Inspect:
+    return "Inspect";
+  case exv::helper::HelperOp::AcquireCoreLease:
+    return "AcquireCoreLease";
+  case exv::helper::HelperOp::KeepAlive:
+    return "KeepAlive";
+  case exv::helper::HelperOp::ReleaseCoreLease:
+    return "ReleaseCoreLease";
+  }
+  return "Unknown";
+}
+
+void log_helper_daemon_event(
+    const std::string &level, const std::string &code,
+    const std::string &message,
+    std::vector<std::pair<std::string, std::string>> fields = {}) {
+  exv::observability::LogFacade::event(level, "helper", code, message,
+                                       std::move(fields));
 }
 
 exv::helper::HelperRequestContext make_helper_request_context(
@@ -252,9 +290,18 @@ int daemon_main(const DaemonOptions &options) {
 
   exv::observability::LogFacade::info("Helper daemon starting (mode=" + options.mode + ")");
 
-  // Single-instance assertion: refuse to start if another helper of the same
-  // kind is already running. The handle is held for the lifetime of daemon_main
-  // and released on return.
+  // Single-instance assertion: refuse to start if any helper daemon is already
+  // running, then preserve mode-specific uniqueness. The handles are held for
+  // the lifetime of daemon_main and released on return.
+  auto global_single_instance =
+      exv::helper::acquire_single_instance(exv::helper::HelperInstanceKind::Global);
+  if (!global_single_instance) {
+    exv::observability::LogFacade::error(
+        "Another helper daemon is already running; exiting to avoid "
+        "service/oneshot drift.");
+    return 1;
+  }
+
   exv::helper::HelperInstanceKind instance_kind =
       options.oneshot ? exv::helper::HelperInstanceKind::Oneshot
                       : exv::helper::HelperInstanceKind::Service;
@@ -331,6 +378,9 @@ int daemon_main(const DaemonOptions &options) {
     }
 
     if (!ipc->verify_client()) {
+      log_helper_daemon_event(
+          "WARN", "helper.ipc.verify_failed",
+          "Helper rejected client during credential verification");
       ipc->close_client();
       continue;
     }
@@ -367,13 +417,23 @@ int daemon_main(const DaemonOptions &options) {
         if (req.contains("op")) {
           exv::helper::HelperRequest helper_req = exv::helper::helper_request_from_json(req);
           if (first_request && helper_req.op != exv::helper::HelperOp::Hello) {
+            log_helper_daemon_event(
+                "WARN", "helper.ipc.first_request_not_hello",
+                "First helper request was not Hello",
+                {{"op", helper_op_log_name(helper_req.op)}});
             exv::helper::HelperResponse helper_resp;
             helper_resp.op = helper_req.op;
             helper_resp.success = false;
             helper_resp.error_code = "hello_required";
             helper_resp.error_message = "First helper request must be Hello";
             nlohmann::json resp_json = helper_resp;
-            ipc->send_response(resp_json.dump());
+            if (!ipc->send_response(resp_json.dump())) {
+              log_helper_daemon_event(
+                  "ERROR", "helper.ipc.response_failed",
+                  "Helper failed to write first-request rejection",
+                  {{"op", helper_op_log_name(helper_req.op)},
+                   {"error_code", helper_resp.error_code}});
+            }
             if (options.oneshot) {
               if (cleanup_all_sessions_or_keep_running(*handler, "invalid first request")) {
                 daemon_stop_requested = 1;
@@ -381,6 +441,12 @@ int daemon_main(const DaemonOptions &options) {
             }
             break;
           }
+
+          log_helper_daemon_event(
+              "INFO", "helper.ipc.request.received",
+              "Helper IPC request received",
+              {{"op", helper_op_log_name(helper_req.op)},
+               {"first_request", first_request ? "true" : "false"}});
 
           exv::helper::HelperResponse helper_resp;
           {
@@ -410,7 +476,21 @@ int daemon_main(const DaemonOptions &options) {
             }
           }
           nlohmann::json resp_json = helper_resp;
-          ipc->send_response(resp_json.dump());
+          if (!ipc->send_response(resp_json.dump())) {
+            log_helper_daemon_event(
+                "ERROR", "helper.ipc.response_failed",
+                "Helper failed to write IPC response",
+                {{"op", helper_op_log_name(helper_req.op)},
+                 {"success", helper_resp.success ? "true" : "false"},
+                 {"error_code", helper_resp.error_code}});
+          } else if (!helper_resp.success) {
+            log_helper_daemon_event(
+                "WARN", "helper.ipc.request.failed",
+                "Helper IPC request returned failure",
+                {{"op", helper_op_log_name(helper_req.op)},
+                 {"error_code", helper_resp.error_code},
+                 {"error_message", helper_resp.error_message}});
+          }
           first_request = false;
           if (handler->should_stop()) {
             daemon_stop_requested = 1;
@@ -420,7 +500,16 @@ int daemon_main(const DaemonOptions &options) {
               make_error(first_request ? "First helper request must be Hello"
                                        : "Helper request envelope must include op",
                          first_request ? "hello_required" : "invalid_envelope");
-          ipc->send_response(err.dump());
+          log_helper_daemon_event(
+              "WARN", "helper.ipc.invalid_envelope",
+              "Helper IPC request envelope was invalid",
+              {{"first_request", first_request ? "true" : "false"}});
+          if (!ipc->send_response(err.dump())) {
+            log_helper_daemon_event(
+                "ERROR", "helper.ipc.response_failed",
+                "Helper failed to write invalid-envelope response",
+                {{"first_request", first_request ? "true" : "false"}});
+          }
           if (first_request && options.oneshot) {
             if (cleanup_all_sessions_or_keep_running(*handler, "invalid envelope")) {
               daemon_stop_requested = 1;
@@ -430,7 +519,17 @@ int daemon_main(const DaemonOptions &options) {
         }
       } catch (const std::exception &e) {
         nlohmann::json err = make_error(std::string("Parse error: ") + e.what());
-        ipc->send_response(err.dump());
+        log_helper_daemon_event(
+            "WARN", "helper.ipc.parse_failed",
+            "Helper failed to parse IPC request",
+            {{"error", e.what()},
+             {"first_request", first_request ? "true" : "false"}});
+        if (!ipc->send_response(err.dump())) {
+          log_helper_daemon_event(
+              "ERROR", "helper.ipc.response_failed",
+              "Helper failed to write parse-error response",
+              {{"first_request", first_request ? "true" : "false"}});
+        }
         if (first_request && options.oneshot) {
           if (cleanup_all_sessions_or_keep_running(*handler, "parse error")) {
             daemon_stop_requested = 1;

@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(exv VERSION 3.3.6 LANGUAGES CXX)
+project(exv VERSION 3.3.7 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -85,12 +85,20 @@ set(EXV_PROTOCOL_SOURCES
     src/vpn_engine/protocol/aggregate_auth.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/http.cpp
     src/vpn_engine/protocol/production_transport.cpp
     src/vpn_engine/protocol/session.cpp
     src/vpn_engine/protocol/tls_stream.cpp
     src/vpn_engine/protocol/url.cpp
+)
+
+set(EXV_DTLS_CHANNEL_BACKEND_SOURCE
+    src/vpn_engine/dtls_channel_disabled.cpp
 )
 
 set(EXV_OBSERVABILITY_SOURCES
@@ -136,6 +144,7 @@ set(EXV_CORE_SOURCES
     src/core/tunnel_controller/connect_intent.cpp
     src/core/tunnel_controller/vpn_connect_job.cpp
     src/core/tunnel_controller/connect_pipeline.cpp
+    src/core/tunnel_controller/connect_progress.cpp
     src/core/tunnel_controller/timing.cpp
     src/core/tunnel_controller/core_error_mapper.cpp
     src/core/tunnel_controller/native_engine_config_mapper.cpp
@@ -155,6 +164,7 @@ set(EXV_CORE_SOURCES
     src/core/rpc/core_api_setup.cpp
     src/core/use_cases/config_use_cases.cpp
     src/core/use_cases/system_status_use_cases.cpp
+    src/core/use_cases/connection_runtime_coordinator.cpp
     src/core/use_cases/tunnel_use_cases.cpp
     src/core/crypto/crypto.cpp
     src/helper/common/helper_connector.cpp
@@ -164,6 +174,7 @@ set(EXV_CORE_SOURCES
     src/platform/common/dns_model.cpp
     src/platform/common/file_system.cpp
     src/platform/common/interface_stats.cpp
+    src/platform/common/network_diagnostics.cpp
     src/platform/common/oneshot_bootstrap.cpp
     src/platform/common/packet_device_factory.cpp
     src/platform/common/process_utils.cpp
@@ -197,6 +208,7 @@ set(EXV_CORE_SOURCES
     src/runtime/runtime_context.cpp
     src/feedback/feedback.cpp
     src/core/connection/connection_attempt.cpp
+    src/core/connection/tunnel_resource_lease.cpp
     src/common/diagnostics/logger.cpp
     src/common/diagnostics/log_event_bus.cpp
     src/common/diagnostics/log_renderer.cpp
@@ -253,6 +265,17 @@ set(EXV_PLATFORM_SOURCES)
 set(EXV_PLATFORM_LIBS)
 set(EXV_PLATFORM_DEFINITIONS)
 
+option(EXV_ENABLE_DTLS_BACKEND "Build native OpenSSL DTLS backend" OFF)
+if(EXV_ENABLE_DTLS_BACKEND)
+    find_package(OpenSSL 1.1.1 REQUIRED)
+    set(EXV_DTLS_CHANNEL_BACKEND_SOURCE
+        src/vpn_engine/dtls_channel_openssl.cpp
+    )
+    list(APPEND EXV_PLATFORM_LIBS OpenSSL::SSL OpenSSL::Crypto)
+    list(APPEND EXV_PLATFORM_DEFINITIONS EXV_ENABLE_DTLS_BACKEND=1)
+endif()
+list(APPEND EXV_CORE_SOURCES ${EXV_DTLS_CHANNEL_BACKEND_SOURCE})
+
 # Source files
 set(SOURCES
     src/app/main.cpp
@@ -280,6 +303,7 @@ if(APPLE)
         src/platform/darwin/helper_service_manager.cpp
         src/platform/darwin/helper_single_instance.cpp
         src/platform/darwin/native_tls_stream.cpp
+        src/platform/darwin/native_datagram_socket.cpp
         src/platform/darwin/native_packet_device.cpp
         src/platform/darwin/default_engine_deps.cpp
         src/platform/darwin/native_route_config.cpp
@@ -331,7 +355,7 @@ elseif(WIN32)
     # need OpenSSL on this platform. The ~7MB libssl/libcrypto DLLs can be
     # dropped from the desktop bundle entirely.
     list(APPEND EXV_PLATFORM_DEFINITIONS EXV_PLATFORM_WINDOWS=1)
-    list(APPEND EXV_PLATFORM_LIBS bcrypt advapi32 iphlpapi ws2_32 secur32 crypt32)
+    list(APPEND EXV_PLATFORM_LIBS bcrypt advapi32 iphlpapi ws2_32 secur32 crypt32 shell32 ole32)
     list(APPEND EXV_PLATFORM_SOURCES
         src/platform/win32/helper_daemon.cpp
         src/platform/win32/app_api_runtime_policy.cpp
@@ -343,10 +367,12 @@ elseif(WIN32)
         src/platform/win32/helper_service_manager.cpp
         src/platform/win32/helper_single_instance.cpp
         src/platform/win32/native_tls_stream.cpp
+        src/platform/win32/native_datagram_socket.cpp
         src/platform/win32/native_packet_device.cpp
         src/platform/win32/default_engine_deps.cpp
         src/platform/win32/native_wintun.cpp
         src/platform/win32/native_ip_config.cpp
+        src/platform/win32/network_diagnostics.cpp
         src/platform/win32/platform_network_ops_win32.cpp
         src/platform/win32/oneshot_bootstrap.cpp
         src/platform/win32/process_control.cpp
@@ -833,6 +859,11 @@ add_executable(native_engine_contract_test
     src/vpn_engine/protocol/aggregate_auth.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/http.cpp
     src/vpn_engine/protocol/production_transport.cpp
@@ -847,6 +878,7 @@ if(APPLE)
         src/platform/darwin/config_defaults.cpp
         src/platform/darwin/default_engine_deps.cpp
         src/platform/darwin/native_tls_stream.cpp
+        src/platform/darwin/native_datagram_socket.cpp
         src/platform/darwin/native_packet_device.cpp
         src/platform/darwin/native_route_config.cpp
         src/platform/darwin/native_utun.cpp
@@ -861,6 +893,7 @@ elseif(WIN32)
         src/platform/win32/config_defaults.cpp
         src/platform/win32/default_engine_deps.cpp
         src/platform/win32/native_tls_stream.cpp
+        src/platform/win32/native_datagram_socket.cpp
         src/platform/win32/native_packet_device.cpp
         src/platform/win32/native_wintun.cpp
         src/platform/win32/native_ip_config.cpp
@@ -893,6 +926,11 @@ add_executable(native_handshake_job_test
     src/vpn_engine/protocol/aggregate_auth.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/http.cpp
     src/vpn_engine/protocol/production_transport.cpp
@@ -907,6 +945,7 @@ if(APPLE)
         src/platform/darwin/config_defaults.cpp
         src/platform/darwin/default_engine_deps.cpp
         src/platform/darwin/native_tls_stream.cpp
+        src/platform/darwin/native_datagram_socket.cpp
         src/platform/darwin/native_packet_device.cpp
         src/platform/darwin/native_route_config.cpp
         src/platform/darwin/native_utun.cpp
@@ -921,6 +960,7 @@ elseif(WIN32)
         src/platform/win32/config_defaults.cpp
         src/platform/win32/default_engine_deps.cpp
         src/platform/win32/native_tls_stream.cpp
+        src/platform/win32/native_datagram_socket.cpp
         src/platform/win32/native_packet_device.cpp
         src/platform/win32/native_wintun.cpp
         src/platform/win32/native_ip_config.cpp
@@ -954,6 +994,11 @@ add_executable(native_event_sink_test
     src/vpn_engine/protocol/aggregate_auth.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/http.cpp
     src/vpn_engine/protocol/production_transport.cpp
@@ -968,6 +1013,7 @@ if(APPLE)
         src/platform/darwin/config_defaults.cpp
         src/platform/darwin/default_engine_deps.cpp
         src/platform/darwin/native_tls_stream.cpp
+        src/platform/darwin/native_datagram_socket.cpp
         src/platform/darwin/native_packet_device.cpp
         src/platform/darwin/native_route_config.cpp
         src/platform/darwin/native_utun.cpp
@@ -982,6 +1028,7 @@ elseif(WIN32)
         src/platform/win32/config_defaults.cpp
         src/platform/win32/default_engine_deps.cpp
         src/platform/win32/native_tls_stream.cpp
+        src/platform/win32/native_datagram_socket.cpp
         src/platform/win32/native_packet_device.cpp
         src/platform/win32/native_wintun.cpp
         src/platform/win32/native_ip_config.cpp
@@ -1511,6 +1558,11 @@ add_executable(native_production_transport_test
     src/vpn_engine/protocol/http.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/production_transport.cpp
 )
@@ -1519,6 +1571,9 @@ target_include_directories(native_production_transport_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
+)
+target_link_libraries(native_production_transport_test PRIVATE
+    ${EXV_PLATFORM_LIBS}
 )
 
 add_test(NAME native_production_transport_test COMMAND native_production_transport_test)
@@ -1529,6 +1584,11 @@ add_executable(native_dtls_transport_test
     src/vpn_engine/protocol/aggregate_auth.cpp
     src/vpn_engine/protocol/auth.cpp
     src/vpn_engine/protocol/cstp.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    src/vpn_engine/protocol/dtls_policy.cpp
     src/vpn_engine/protocol/dtls_transport.cpp
     src/vpn_engine/protocol/production_transport.cpp
     src/vpn_engine/protocol/url.cpp
@@ -1539,8 +1599,156 @@ target_include_directories(native_dtls_transport_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${CMAKE_SOURCE_DIR}/tests
 )
+target_link_libraries(native_dtls_transport_test PRIVATE
+    ${EXV_PLATFORM_LIBS}
+)
 
 add_test(NAME native_dtls_transport_test COMMAND native_dtls_transport_test)
+
+add_executable(native_dtls_offer_test
+    tests/native_dtls_offer_test.cpp
+    src/vpn_engine/protocol/dtls_offer.cpp
+)
+
+target_include_directories(native_dtls_offer_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME native_dtls_offer_test COMMAND native_dtls_offer_test)
+
+add_executable(native_dtls_policy_test
+    tests/native_dtls_policy_test.cpp
+    src/vpn_engine/protocol/dtls_policy.cpp
+)
+
+target_include_directories(native_dtls_policy_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME native_dtls_policy_test COMMAND native_dtls_policy_test)
+
+add_executable(native_dtls_data_channel_test
+    tests/native_dtls_data_channel_test.cpp
+    src/vpn_engine/protocol/data_channel.cpp
+)
+
+target_include_directories(native_dtls_data_channel_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+add_test(NAME native_dtls_data_channel_test COMMAND native_dtls_data_channel_test)
+
+add_executable(native_datagram_socket_contract_test
+    tests/native_datagram_socket_contract_test.cpp
+)
+
+if(WIN32)
+    target_sources(native_datagram_socket_contract_test PRIVATE
+        src/platform/win32/native_datagram_socket.cpp
+    )
+    target_link_libraries(native_datagram_socket_contract_test PRIVATE ws2_32)
+elseif(APPLE)
+    target_sources(native_datagram_socket_contract_test PRIVATE
+        src/platform/darwin/native_datagram_socket.cpp
+    )
+elseif(UNIX)
+    target_sources(native_datagram_socket_contract_test PRIVATE
+        src/platform/linux/native_datagram_socket.cpp
+    )
+endif()
+
+target_include_directories(native_datagram_socket_contract_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_compile_definitions(native_datagram_socket_contract_test PRIVATE
+    EXV_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+add_test(NAME native_datagram_socket_contract_test COMMAND native_datagram_socket_contract_test)
+
+add_executable(native_gateway_route_diagnostics_test
+    tests/native_gateway_route_diagnostics_test.cpp
+    src/platform/win32/network_diagnostics.cpp
+)
+
+target_include_directories(native_gateway_route_diagnostics_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+if(WIN32)
+    target_link_libraries(native_gateway_route_diagnostics_test PRIVATE
+        iphlpapi
+        ws2_32
+    )
+endif()
+
+add_test(NAME native_gateway_route_diagnostics_test
+         COMMAND native_gateway_route_diagnostics_test)
+
+add_executable(native_dtls_channel_test
+    tests/native_dtls_channel_test.cpp
+    src/vpn_engine/protocol/dtls_channel.cpp
+    ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+)
+
+target_include_directories(native_dtls_channel_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_compile_definitions(native_dtls_channel_test PRIVATE
+    ${EXV_PLATFORM_DEFINITIONS}
+)
+
+add_test(NAME native_dtls_channel_test COMMAND native_dtls_channel_test)
+
+if(EXV_ENABLE_DTLS_BACKEND)
+    target_link_libraries(native_dtls_channel_test PRIVATE
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+    if(WIN32 AND OPENSSL_ROOT_DIR)
+        set_tests_properties(native_dtls_channel_test PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${OPENSSL_ROOT_DIR}/bin"
+        )
+    endif()
+
+    add_executable(native_dtls_channel_openssl_test
+        tests/native_dtls_channel_test.cpp
+        src/vpn_engine/protocol/dtls_channel.cpp
+        ${EXV_DTLS_CHANNEL_BACKEND_SOURCE}
+    )
+
+    target_include_directories(native_dtls_channel_openssl_test PRIVATE
+        ${CMAKE_SOURCE_DIR}/include
+        ${CMAKE_SOURCE_DIR}/src
+    )
+
+    target_compile_definitions(native_dtls_channel_openssl_test PRIVATE
+        ${EXV_PLATFORM_DEFINITIONS}
+    )
+
+    target_link_libraries(native_dtls_channel_openssl_test PRIVATE
+        OpenSSL::SSL
+        OpenSSL::Crypto
+    )
+
+    add_test(NAME native_dtls_channel_openssl_test
+             COMMAND native_dtls_channel_openssl_test)
+    if(WIN32 AND OPENSSL_ROOT_DIR)
+        set_tests_properties(native_dtls_channel_openssl_test PROPERTIES
+            ENVIRONMENT_MODIFICATION
+                "PATH=path_list_prepend:${OPENSSL_ROOT_DIR}/bin"
+        )
+    endif()
+endif()
 
 add_executable(native_fake_anyconnect_server_test
     tests/native_fake_anyconnect_server_test.cpp
@@ -1711,14 +1919,6 @@ target_include_directories(reconnect_policy_test PRIVATE
     ${CMAKE_SOURCE_DIR}/src
 )
 
-target_link_libraries(reconnect_policy_test PRIVATE
-    exv-core-tunnel-reconnect-module
-)
-
-set_target_properties(reconnect_policy_test PROPERTIES
-    CXX_SCAN_FOR_MODULES ON
-)
-
 add_test(NAME reconnect_policy_test COMMAND reconnect_policy_test)
 
 add_executable(timer_scheduler_test
@@ -1750,14 +1950,6 @@ add_executable(reconnect_deterministic_test
 target_include_directories(reconnect_deterministic_test PRIVATE
     ${CMAKE_SOURCE_DIR}/include
     ${CMAKE_SOURCE_DIR}/src
-)
-
-target_link_libraries(reconnect_deterministic_test PRIVATE
-    exv-core-tunnel-reconnect-module
-)
-
-set_target_properties(reconnect_deterministic_test PROPERTIES
-    CXX_SCAN_FOR_MODULES ON
 )
 
 add_test(NAME reconnect_deterministic_test COMMAND reconnect_deterministic_test)
@@ -1854,6 +2046,33 @@ target_include_directories(connect_pipeline_test PRIVATE
 target_link_libraries(connect_pipeline_test PRIVATE exv-core Threads::Threads ${EXV_PLATFORM_LIBS})
 
 add_test(NAME connect_pipeline_test COMMAND connect_pipeline_test)
+
+add_executable(connect_progress_tracker_test
+    tests/connect_progress_tracker_test.cpp
+)
+
+target_include_directories(connect_progress_tracker_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(connect_progress_tracker_test PRIVATE exv-core)
+
+add_test(NAME connect_progress_tracker_test COMMAND connect_progress_tracker_test)
+
+add_executable(connection_runtime_coordinator_test
+    tests/connection_runtime_coordinator_test.cpp
+)
+
+target_include_directories(connection_runtime_coordinator_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(connection_runtime_coordinator_test PRIVATE exv-core)
+
+add_test(NAME connection_runtime_coordinator_test
+         COMMAND connection_runtime_coordinator_test)
 
 add_executable(native_engine_config_mapper_test
     tests/native_engine_config_mapper_test.cpp
@@ -2356,7 +2575,11 @@ target_include_directories(vpn_actions_test PRIVATE
     ${CMAKE_SOURCE_DIR}/tests
 )
 
-target_link_libraries(vpn_actions_test PRIVATE exv-core)
+target_compile_definitions(vpn_actions_test PRIVATE
+    EXV_SOURCE_DIR="${CMAKE_SOURCE_DIR}"
+)
+
+target_link_libraries(vpn_actions_test PRIVATE exv-core exv-helper-runtime)
 
 add_test(NAME vpn_actions_test COMMAND vpn_actions_test)
 
@@ -2757,6 +2980,22 @@ target_link_libraries(connection_attempt_test PRIVATE
 
 add_test(NAME connection_attempt_test COMMAND connection_attempt_test)
 
+add_executable(tunnel_resource_lease_test
+    tests/tunnel_resource_lease_test.cpp
+)
+
+target_include_directories(tunnel_resource_lease_test PRIVATE
+    ${CMAKE_SOURCE_DIR}/include
+    ${CMAKE_SOURCE_DIR}/src
+)
+
+target_link_libraries(tunnel_resource_lease_test PRIVATE
+    exv-core
+    Threads::Threads
+)
+
+add_test(NAME tunnel_resource_lease_test COMMAND tunnel_resource_lease_test)
+
 # NOTE: app_api_logs_test depends on the full app_api build chain (WebUI assets,
 # SSE broadcaster, etc.) and is tested as part of the exv integration build.
 
@@ -2860,6 +3099,7 @@ set(_release_blocking_tests
     core_error_mapper_test
     engine_event_bridge_test
     core_session_runner_test
+    connect_progress_tracker_test
     tunnel_controller_state_machine_test
     tunnel_contract_test
     tunnel_module_smoke_test
@@ -2928,8 +3168,8 @@ set_property(TEST ${_release_blocking_tests} APPEND PROPERTY LABELS "release-blo
 # runtime DLLs.  On CI runners the toolchain bin dir is usually already on
 # PATH, but local developer machines may not have it.  We inject both the
 # MinGW compiler bin directory and the exv-core build directory (which
-# contains the MinGW DLLs next to the test binaries) via the ENVIRONMENT
-# test property.
+# contains the MinGW DLLs next to the test binaries) via the
+# ENVIRONMENT_MODIFICATION test property.
 if(WIN32 AND NOT MSVC)
     get_filename_component(MINGW_BIN_DIR "${CMAKE_CXX_COMPILER}" DIRECTORY)
     # All test executables link against the MinGW runtime DLLs (libgcc_s_seh,
@@ -2937,10 +3177,19 @@ if(WIN32 AND NOT MSVC)
     # PATH the loader fails with 0xc0000139 (entrypoint/DLL not found). Apply
     # the PATH environment to every defined test, not just the release-blocking
     # subset, so newly added tests are runnable without per-test opt-in.
+    set(_exv_test_path_modifications
+        "PATH=path_list_prepend:${MINGW_BIN_DIR}"
+        "PATH=path_list_prepend:$<TARGET_FILE_DIR:exv-core>"
+    )
+    if(EXV_ENABLE_DTLS_BACKEND AND OPENSSL_ROOT_DIR)
+        list(APPEND _exv_test_path_modifications
+            "PATH=path_list_prepend:${OPENSSL_ROOT_DIR}/bin"
+        )
+    endif()
     get_directory_property(_all_tests TESTS)
     foreach(_test IN LISTS _all_tests)
         set_tests_properties(${_test} PROPERTIES
-            ENVIRONMENT "PATH=${MINGW_BIN_DIR};$<TARGET_FILE_DIR:exv-core>;$ENV{PATH}"
+            ENVIRONMENT_MODIFICATION "${_exv_test_path_modifications}"
         )
     endforeach()
 endif()
@@ -2993,6 +3242,7 @@ set_property(TEST
     core_error_mapper_test
     engine_event_bridge_test
     core_session_runner_test
+    connect_progress_tracker_test
     tunnel_controller_state_machine_test
     tunnel_controller_integration_test
     tunnel_contract_test
@@ -3057,6 +3307,7 @@ set_property(TEST
     timer_scheduler_test
     core_error_mapper_test
     core_session_runner_test
+    connect_progress_tracker_test
     tunnel_controller_state_machine_test
     tunnel_controller_integration_test
     core_process_test

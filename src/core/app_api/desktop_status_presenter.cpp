@@ -4,6 +4,7 @@
 #include "core/config/config_api.hpp"
 #include "core/config/config_platform_view.hpp"
 #include "core/network/virtual_network_status.hpp"
+#include "core/tunnel_controller/connect_progress_json.hpp"
 #include "platform/common/driver_status.hpp"
 #include "platform/common/interface_stats.hpp"
 #include "platform/common/runtime_status.hpp"
@@ -115,12 +116,10 @@ void add_cached_virtual_network_fields(nlohmann::json &status,
   auto &state = virtual_network_probe_state();
   nlohmann::json fields = default_virtual_network_fields();
   const std::string key = interface_name;
-  const auto now = Clock::now();
   {
     std::lock_guard<std::mutex> lock(state.mutex);
     const auto cached = state.cache.find(key);
-    if (cached != state.cache.end() &&
-        cache_entry_fresh(cached->second, now)) {
+    if (cached != state.cache.end()) {
       fields = cached->second.fields;
     }
   }
@@ -163,6 +162,11 @@ nlohmann::json disconnected_status(const Config &cfg) {
                    {"network_ready", false},
                    {"interface", ""},
                    {"internal_ip", ""},
+                   {"dtls_mode", "auto"},
+                   {"active_data_channel", "cstp_tls"},
+                   {"dtls_state", "disabled"},
+                   {"dtls_fallback_reason", ""},
+                   {"dtls_fallback_count", 0},
                    {"route_count", static_cast<int>(cfg.routes.size())},
                    {"mtu", cfg.mtu},
                    {"uptime_seconds", 0},
@@ -221,6 +225,7 @@ nlohmann::json settings_config(const Config &cfg) {
 
   return nlohmann::json{{"mtu", cfg.mtu},
                         {"dtls", !cfg.disable_dtls},
+                        {"dtls_mode", cfg.dtls_mode},
                         {"extra_args", extra_args},
                         {"log_path", cfg.log_file},
                         {"vpn_engine", cfg.vpn_engine},
@@ -274,6 +279,11 @@ nlohmann::json frontend_status_from_controller_snapshot(
   j["network_ready"] = snap.network_ready;
   j["interface"] = snap.interface_name;
   j["internal_ip"] = snap.internal_ip;
+  j["dtls_mode"] = snap.dtls_mode;
+  j["active_data_channel"] = snap.active_data_channel;
+  j["dtls_state"] = snap.dtls_state;
+  j["dtls_fallback_reason"] = snap.dtls_fallback_reason;
+  j["dtls_fallback_count"] = snap.dtls_fallback_count;
   j["route_count"] = static_cast<int>(cfg.routes.size());
   j["mtu"] = cfg.mtu;
   j["uptime_seconds"] = 0;
@@ -290,6 +300,8 @@ nlohmann::json frontend_status_from_controller_snapshot(
   }
   j["auto_reconnect"] = snap.auto_reconnect;
   j["phase"] = exv::core::tunnel_phase_wire_name(snap.phase);
+  j["connect_progress"] =
+      exv::core::connect_progress_to_json(snap.connect_progress);
   add_cached_virtual_network_fields(j, snap.interface_name);
   return j;
 }
@@ -331,6 +343,14 @@ void reset_virtual_network_probe_state_for_testing() {
   state.cache.clear();
   state.in_flight.clear();
   state.pending_events.clear();
+}
+
+void expire_virtual_network_probe_cache_for_testing() {
+  auto &state = virtual_network_probe_state();
+  std::lock_guard<std::mutex> lock(state.mutex);
+  for (auto &[_, entry] : state.cache) {
+    entry.updated_at -= kVirtualNetworkProbeCacheTtl + std::chrono::seconds(1);
+  }
 }
 
 } // namespace app_api

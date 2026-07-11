@@ -29,6 +29,10 @@ int start(const Config &cfg, int retry_limit) {
         "VPN CLI: rejected non-native engine");
     return 1;
   }
+  if (retry_limit < 0) {
+    cli::print_error("retry_limit must be 0 or a positive integer.");
+    return 1;
+  }
 
   exv::observability::LogFacade::info("VPN CLI: Validating native engine configuration");
   auto validation = exv::core::validate_native_app_config(cfg);

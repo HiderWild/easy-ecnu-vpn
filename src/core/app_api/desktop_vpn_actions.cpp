@@ -9,9 +9,11 @@
 #include "core/config/config_manager.hpp"
 #include "core/config/config_platform_view.hpp"
 #include "core/connection/connection_attempt.hpp"
+#include "core/connection/tunnel_resource_lease.hpp"
 #include "core/crypto/crypto.hpp"
 #include "core/rpc/desktop_rpc_adapter.hpp"
 #include "core/tunnel_controller/connect_pipeline.hpp"
+#include "core/tunnel_controller/connect_progress_json.hpp"
 #include "core/tunnel_controller/engine_event_bridge.hpp"
 #include "core/tunnel_controller/native_engine_config_mapper.hpp"
 #include "core/tunnel_controller/timing.hpp"
@@ -31,11 +33,13 @@
 #include "platform/common/runtime_paths.hpp"
 #include "vpn_engine/native_handshake_job.hpp"
 
+#include <atomic>
 #include <chrono>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <utility>
 
 namespace exv {
@@ -204,6 +208,8 @@ nlohmann::json connect_state_json(const exv::core::VpnConnectJobState &state) {
   out["user_cancelled"] = state.user_cancelled;
   out["desired_connected"] = state.desired_connected;
   out["intent_epoch"] = state.intent_epoch;
+  out["connect_progress"] =
+      exv::core::connect_progress_to_json(state.connect_progress);
   if (!state.last_error_code.empty()) {
     out["last_error"] = {{"code", state.last_error_code},
                          {"message", state.last_error_message}};
@@ -211,12 +217,77 @@ nlohmann::json connect_state_json(const exv::core::VpnConnectJobState &state) {
   return out;
 }
 
+void mark_desktop_connect_progress_done(std::uint64_t epoch,
+                                        std::string_view key) {
+  (void)exv::core::tunnel_use_cases()
+      .connect_jobs()
+      .mark_connect_progress_done(epoch, key);
+}
+
+void mark_desktop_connect_progress_failed(std::uint64_t epoch,
+                                          std::string_view key) {
+  (void)exv::core::tunnel_use_cases()
+      .connect_jobs()
+      .mark_connect_progress_failed(epoch, key);
+}
+
+bool code_contains(std::string_view code, std::string_view needle) {
+  return code.find(needle) != std::string_view::npos;
+}
+
+std::string_view progress_step_for_protocol_failure(std::string_view code) {
+  if (code_contains(code, "auth") || code_contains(code, "credential") ||
+      code_contains(code, "password") || code_contains(code, "group") ||
+      code_contains(code, "challenge")) {
+    return "auth";
+  }
+  return "server";
+}
+
+std::string_view progress_step_for_platform_failure(std::string_view code) {
+  if (code_contains(code, "route") || code_contains(code, "dns") ||
+      code_contains(code, "firewall") ||
+      code_contains(code, "platform_checks")) {
+    return "routes";
+  }
+  return "adapter";
+}
+
+std::string_view progress_step_for_pipeline_failure(
+    const exv::core::ConnectPipelineResult &result) {
+  if (result.first_failure_branch ==
+      exv::core::connect_branch_name(
+          exv::core::ConnectBranch::BackendHelperReady)) {
+    return "helper";
+  }
+  if (result.first_failure_branch ==
+      exv::core::connect_branch_name(
+          exv::core::ConnectBranch::PlatformReady)) {
+    return progress_step_for_platform_failure(result.code);
+  }
+  if (result.first_failure_branch ==
+      exv::core::connect_branch_name(
+          exv::core::ConnectBranch::ProtocolHandshake)) {
+    return progress_step_for_protocol_failure(result.code);
+  }
+  return "helper";
+}
+
 void clear_desktop_connect_error() {
   exv::core::tunnel_use_cases().clear_connect_error();
 }
 
+void clear_desktop_connect_error_for_epoch(std::uint64_t epoch) {
+  exv::core::tunnel_use_cases().clear_connect_error(epoch);
+}
+
 void set_desktop_connect_error(nlohmann::json failure) {
   exv::core::tunnel_use_cases().set_connect_error(std::move(failure));
+}
+
+void set_desktop_connect_error_for_epoch(std::uint64_t epoch,
+                                         nlohmann::json failure) {
+  exv::core::tunnel_use_cases().set_connect_error(epoch, std::move(failure));
 }
 
 std::optional<nlohmann::json> desktop_connect_error() {
@@ -245,7 +316,7 @@ struct PreparedHandshakeHolder {
   bool ready = false;
 };
 
-void apply_desktop_connect_error(nlohmann::json *status) {
+void apply_desktop_connect_error_impl(nlohmann::json *status) {
   if (!status) return;
   auto failure = desktop_connect_error();
   if (!failure || !failure->is_object()) return;
@@ -258,10 +329,38 @@ void apply_desktop_connect_error(nlohmann::json *status) {
       json_string(*failure, "recommended_action");
 }
 
-void apply_desktop_connect_job_status(nlohmann::json *status) {
+bool status_connect_progress_inactive(const nlohmann::json &status) {
+  if (!status.is_object() || !status.contains("connect_progress") ||
+      !status["connect_progress"].is_object()) {
+    return true;
+  }
+  const auto &progress = status["connect_progress"];
+  if (!progress.value("active_key", std::string()).empty()) {
+    return false;
+  }
+  if (!progress.contains("steps") || !progress["steps"].is_array()) {
+    return true;
+  }
+  for (const auto &step : progress["steps"]) {
+    if (step.value("state", std::string()) != "pending") {
+      return false;
+    }
+  }
+  return true;
+}
+
+void apply_desktop_connect_job_status_impl(
+    nlohmann::json *status,
+    bool preserve_controller_snapshot) {
   if (!status) return;
   auto state = exv::core::tunnel_use_cases().connect_jobs().snapshot();
   if (!state.active || !state.desired_connected) {
+    return;
+  }
+
+  const bool overlay_job_progress =
+      !preserve_controller_snapshot || status_connect_progress_inactive(*status);
+  if (!overlay_job_progress) {
     return;
   }
 
@@ -272,6 +371,8 @@ void apply_desktop_connect_job_status(nlohmann::json *status) {
   (*status)["connect_job_id"] = state.job_id;
   (*status)["connect_intent_epoch"] = state.intent_epoch;
   (*status)["connect_cancelling"] = state.cancelling;
+  (*status)["connect_progress"] =
+      exv::core::connect_progress_to_json(state.connect_progress);
 }
 
 void cleanup_unused_oneshot_backend(const nlohmann::json &backend) {
@@ -306,13 +407,36 @@ void cleanup_unused_oneshot_backend(const nlohmann::json &backend) {
   }
 }
 
+void release_failed_or_idle_active_tunnel_lease() {
+  auto &use_cases = exv::core::tunnel_use_cases();
+  if (use_cases.active_tunnel_lease_id().empty()) {
+    return;
+  }
+
+  auto controller = get_tunnel_controller_if_exists();
+  if (controller) {
+    const auto phase = controller->phase();
+    if (phase != exv::core::TunnelPhase::Failed &&
+        phase != exv::core::TunnelPhase::Idle) {
+      return;
+    }
+  }
+
+  exv::observability::LogFacade::info(
+      "app_api: releasing failed-or-idle active tunnel lease before retry");
+  reset_tunnel_controller();
+}
+
 void run_desktop_connect_job(Config cfg,
                              std::string password,
                              std::string attempt_id,
-                             std::stop_token stop) {
+                             std::stop_token stop,
+                             std::uint64_t epoch) {
   StageTimer timing("desktop.connect.background");
   timing.mark("background_job_started",
               attempt_id.empty() ? "attempt_id=none" : "attempt_id=present");
+  mark_desktop_connect_progress_done(epoch, "intent");
+  clear_desktop_connect_error_for_epoch(epoch);
   testing::fire_desktop_vpn_connect_entered_hook();
   if (stop.stop_requested()) {
     return;
@@ -333,7 +457,7 @@ void run_desktop_connect_job(Config cfg,
             " code=" + late.code + " first_code=" + std::string(first_code));
       });
 
-  auto backend_branch = [attempt_id](
+  auto backend_branch = [attempt_id, epoch](
                              [[maybe_unused]] std::stop_token branch_stop) {
     StageTimer branch_timing("desktop.connect.backend_helper_ready");
     platform::BackendResolveOptions options;
@@ -356,6 +480,7 @@ void run_desktop_connect_job(Config cfg,
                            "code=" + backend.value(
                                          "code",
                                          platform::kHelperUnavailableCode));
+      mark_desktop_connect_progress_failed(epoch, "helper");
       return exv::core::ConnectBranchResult{
           exv::core::ConnectBranch::BackendHelperReady,
           false,
@@ -378,11 +503,12 @@ void run_desktop_connect_job(Config cfg,
     }
     branch_timing.finish(true,
                          "mode=" + backend.value("mode", std::string("unknown")));
+    mark_desktop_connect_progress_done(epoch, "helper");
     return exv::core::ConnectBranchResult{
         exv::core::ConnectBranch::BackendHelperReady, true, {}, {}, backend};
   };
 
-  auto platform_branch = [cfg](std::stop_token branch_stop) {
+  auto platform_branch = [cfg, epoch](std::stop_token branch_stop) {
     StageTimer branch_timing("desktop.connect.platform_ready");
     if (branch_stop.stop_requested()) {
       branch_timing.finish(false, "code=cancelled");
@@ -398,6 +524,7 @@ void run_desktop_connect_job(Config cfg,
     nlohmann::json runtime = runtime_status_json(cfg);
     if (!runtime.value("available", false)) {
       branch_timing.finish(false, "code=runtime_unavailable");
+      mark_desktop_connect_progress_failed(epoch, "adapter");
       return exv::core::ConnectBranchResult{
           exv::core::ConnectBranch::PlatformReady,
           false,
@@ -421,6 +548,9 @@ void run_desktop_connect_job(Config cfg,
           false,
           "code=" +
               platform_err.value("code", std::string("platform_checks_failed")));
+      mark_desktop_connect_progress_failed(
+          epoch, progress_step_for_platform_failure(platform_err.value(
+                     "code", std::string("platform_checks_failed"))));
       return exv::core::ConnectBranchResult{
           exv::core::ConnectBranch::PlatformReady,
           false,
@@ -440,7 +570,7 @@ void run_desktop_connect_job(Config cfg,
         nlohmann::json{{"runtime", runtime}, {"platform", platform_err}}};
   };
 
-  auto protocol_branch = [cfg, password, prepared_handshake](
+  auto protocol_branch = [cfg, password, prepared_handshake, epoch](
                               std::stop_token branch_stop) mutable {
     StageTimer branch_timing("desktop.connect.protocol_handshake");
     exv::vpn_engine::VpnEngineConfig engine_config;
@@ -449,6 +579,8 @@ void run_desktop_connect_job(Config cfg,
         exv::core::make_native_engine_config(cfg, password, &engine_config);
     if (!mapped.ok) {
       branch_timing.finish(false, "code=" + mapped.code);
+      mark_desktop_connect_progress_failed(
+          epoch, progress_step_for_protocol_failure(mapped.code));
       return exv::core::ConnectBranchResult{
           exv::core::ConnectBranch::ProtocolHandshake,
           false,
@@ -510,6 +642,8 @@ void run_desktop_connect_job(Config cfg,
     auto result = job.run(branch_stop, &handshake);
     if (!result.ok) {
       branch_timing.finish(false, "code=" + result.code);
+      mark_desktop_connect_progress_failed(
+          epoch, progress_step_for_protocol_failure(result.code));
       return exv::core::ConnectBranchResult{
           exv::core::ConnectBranch::ProtocolHandshake,
           false,
@@ -543,6 +677,8 @@ void run_desktop_connect_job(Config cfg,
       prepared_handshake->ready = true;
     }
     branch_timing.finish(true, "stage=cstp_connected");
+    mark_desktop_connect_progress_done(epoch, "auth");
+    mark_desktop_connect_progress_done(epoch, "server");
     return exv::core::ConnectBranchResult{
         exv::core::ConnectBranch::ProtocolHandshake, true, {}, {}, payload};
   };
@@ -551,6 +687,10 @@ void run_desktop_connect_job(Config cfg,
       pipeline.run(std::move(backend_branch), std::move(platform_branch),
                    std::move(protocol_branch), stop);
   if (!pipeline_result.ok) {
+    if (pipeline_result.code != "cancelled") {
+      mark_desktop_connect_progress_failed(
+          epoch, progress_step_for_pipeline_failure(pipeline_result));
+    }
     timing.mark("first_failure",
                 "branch=" + pipeline_result.first_failure_branch +
                     " code=" + pipeline_result.code);
@@ -559,7 +699,8 @@ void run_desktop_connect_job(Config cfg,
                              " code=" + pipeline_result.code);
     cleanup_unused_oneshot_backend(pipeline_result.backend);
     if (pipeline_result.code != "cancelled") {
-      set_desktop_connect_error(
+      set_desktop_connect_error_for_epoch(
+          epoch,
           error(pipeline_result.message.empty()
                     ? "VPN connect preflight failed."
                     : pipeline_result.message,
@@ -576,6 +717,8 @@ void run_desktop_connect_job(Config cfg,
     return;
   }
 
+  release_failed_or_idle_active_tunnel_lease();
+
   std::string helper_endpoint;
   if (pipeline_result.backend.is_object()) {
     auto backend = pipeline_result.backend;
@@ -587,7 +730,7 @@ void run_desktop_connect_job(Config cfg,
                                    std::string("Unknown backend error")),
                            backend.value("code",
                                          platform::kHelperUnavailableCode));
-      set_desktop_connect_error(failure);
+      set_desktop_connect_error_for_epoch(epoch, failure);
       return;
     }
     helper_endpoint = backend.value("endpoint", std::string());
@@ -596,8 +739,47 @@ void run_desktop_connect_job(Config cfg,
                                         : "endpoint=extracted");
   }
 
-  reset_tunnel_controller();
+  std::string lease_error_code;
+  std::string lease_error_message;
+  if (!exv::core::tunnel_use_cases().acquire_active_tunnel_lease(
+          "desktop.connect", cfg.server, &lease_error_code,
+          &lease_error_message)) {
+    timing.finish(false, "stage=tunnel_resource_lease code=" +
+                             lease_error_code);
+    mark_desktop_connect_progress_failed(epoch, "helper");
+    cleanup_unused_oneshot_backend(pipeline_result.backend);
+    set_desktop_connect_error_for_epoch(
+        epoch,
+        error(lease_error_message.empty()
+                  ? "已有 VPN 隧道正在运行，请先断开后重试。"
+                  : lease_error_message,
+              lease_error_code.empty()
+                  ? exv::connection::tunnel_resource_lease::
+                        kTunnelResourceActiveCode
+                  : lease_error_code));
+    return;
+  }
+  timing.mark("tunnel_resource_lease", "acquired=true");
+
+  exv::core::tunnel_use_cases().reset_controller(false);
   timing.mark("reset_controller", "stale_state_cleared");
+
+  struct StatusObserverGuard {
+    exv::core::TunnelUseCases::StatusObserverId id = 0;
+
+    ~StatusObserverGuard() {
+      if (id != 0) {
+        exv::core::tunnel_use_cases().remove_status_observer(id);
+      }
+    }
+
+    void reset(exv::core::TunnelUseCases::StatusObserverId next_id) {
+      if (id != 0) {
+        exv::core::tunnel_use_cases().remove_status_observer(id);
+      }
+      id = next_id;
+    }
+  } status_observer_guard;
 
   timing.mark("tunnel_controller_init_start",
               helper_endpoint.empty() ? "endpoint=default" : "endpoint=custom");
@@ -608,16 +790,43 @@ void run_desktop_connect_job(Config cfg,
   if (controller) {
     exv::observability::LogFacade::info(
         "app_api: TunnelController initialized successfully");
+    exv::core::tunnel_use_cases().track_active_connection_attempt(
+        platform::get_config_dir(), attempt_id);
+    if (!attempt_id.empty()) {
+      const std::string attempt_config_dir = platform::get_config_dir();
+      const std::string owned_attempt_id = attempt_id;
+      auto terminal_marked = std::make_shared<std::atomic_bool>(false);
+      auto observer_id =
+          std::make_shared<exv::core::TunnelUseCases::StatusObserverId>(0);
+      *observer_id = exv::core::tunnel_use_cases().add_status_observer(
+          [attempt_config_dir, owned_attempt_id, terminal_marked, observer_id](
+              const exv::core::TunnelStatusSnapshot &snapshot) {
+            if (snapshot.phase != exv::core::TunnelPhase::Failed) {
+              return;
+            }
+            bool expected = false;
+            if (!terminal_marked->compare_exchange_strong(expected, true)) {
+              return;
+            }
+            conn_attempt::mark_terminal_if_current(
+                attempt_config_dir, owned_attempt_id, "controller_failed");
+            exv::core::tunnel_use_cases().remove_status_observer(*observer_id);
+          });
+      status_observer_guard.reset(*observer_id);
+    }
   }
   timing.mark("tunnel_controller",
               controller ? "initialized=true" : "initialized=false");
 
   if (!controller) {
     timing.finish(false, "stage=tunnel_controller_init");
-    set_desktop_connect_error(
+    mark_desktop_connect_progress_failed(epoch, "helper");
+    set_desktop_connect_error_for_epoch(
+        epoch,
         error("Failed to initialize VPN controller: " +
                   tunnel_controller_init_error(),
               platform::kHelperUnavailableCode));
+    reset_tunnel_controller();
     return;
   }
 
@@ -632,9 +841,12 @@ void run_desktop_connect_job(Config cfg,
     std::lock_guard<std::mutex> lock(prepared_handshake->mutex);
     if (!prepared_handshake->ready) {
       timing.finish(false, "stage=prepared_handshake_missing");
-      set_desktop_connect_error(
+      mark_desktop_connect_progress_failed(epoch, "server");
+      set_desktop_connect_error_for_epoch(
+          epoch,
           error("Native handshake did not produce a prepared session.",
                 "prepared_handshake_missing"));
+      reset_tunnel_controller();
       return;
     }
     controller->set_prepared_native_handshake(
@@ -660,10 +872,17 @@ void run_desktop_connect_job(Config cfg,
                 "phase=" + std::to_string(static_cast<int>(snap.phase)));
   if (connect_failed) {
     nlohmann::json status = frontend_status_from_controller_snapshot(snap, cfg);
-    set_desktop_connect_error(status);
+    set_desktop_connect_error_for_epoch(epoch, status);
     reset_tunnel_controller();
     return;
   }
+  clear_desktop_connect_error_for_epoch(epoch);
+  exv::core::PendingConnectRequest fulfilled;
+  fulfilled.profile_id = cfg.server;
+  fulfilled.server = cfg.server;
+  fulfilled.has_password = !password.empty();
+  exv::core::tunnel_use_cases().connect_jobs().mark_connect_succeeded(
+      epoch, fulfilled);
   attempt_cleanup.dismiss();
 }
 
@@ -677,6 +896,16 @@ nlohmann::json auth_interaction_json(
 }
 
 } // namespace
+
+void apply_desktop_connect_job_status(
+    nlohmann::json *status,
+    bool preserve_controller_snapshot) {
+  apply_desktop_connect_job_status_impl(status, preserve_controller_snapshot);
+}
+
+void apply_desktop_connect_error(nlohmann::json *status) {
+  apply_desktop_connect_error_impl(status);
+}
 
 void shutdown_desktop_vpn_runtime() {
   exv::observability::LogFacade::info(
@@ -717,11 +946,14 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         auto controller = get_tunnel_controller_if_exists();
         if (controller) {
           auto snap = controller->status();
-          return frontend_status_from_controller_snapshot(snap, cfg);
+          auto status = frontend_status_from_controller_snapshot(snap, cfg);
+          apply_desktop_connect_job_status_impl(&status, true);
+          apply_desktop_connect_error_impl(&status);
+          return status;
         }
         auto status = disconnected_status(cfg);
-        apply_desktop_connect_job_status(&status);
-        apply_desktop_connect_error(&status);
+        apply_desktop_connect_job_status_impl(&status, false);
+        apply_desktop_connect_error_impl(&status);
         return status;
       });
 
@@ -758,21 +990,41 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         pending.server = cfg.server;
         pending.has_password = !password.empty();
 
-        {
-          auto &tuc = exv::core::tunnel_use_cases();
-          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
-          auto &jobs = tuc.connect_jobs();
-          auto active = jobs.snapshot();
-          if (active.active) {
-            auto state = jobs.submit_connect(
-                pending,
-                [cfg, password](std::stop_token stop, std::uint64_t) mutable {
-                  if (stop.stop_requested()) return;
-                  run_desktop_connect_job(cfg, password, std::string(), stop);
-                });
-            timing.finish(true, "stage=accepted coalesced=true");
-            return connect_state_json(state);
-          }
+        auto &use_cases = exv::core::tunnel_use_cases();
+        auto &jobs = use_cases.connect_jobs();
+        if (use_cases.current_runtime_is_connected()) {
+          auto status = frontend_status_from_controller_snapshot(
+              use_cases.latest_status().value_or(
+                  exv::core::TunnelStatusSnapshot{}),
+              cfg);
+          apply_desktop_connect_error_impl(&status);
+          timing.finish(true, "stage=already_connected");
+          return status;
+        }
+
+        auto active = jobs.snapshot();
+        if (active.active) {
+          auto state = jobs.submit_connect(
+              pending,
+              [cfg, password](std::stop_token stop,
+                              std::uint64_t epoch) mutable {
+                if (stop.stop_requested()) return;
+                run_desktop_connect_job(cfg, password, std::string(), stop,
+                                        epoch);
+              });
+          timing.finish(true, "stage=accepted coalesced=true");
+          return connect_state_json(state);
+        }
+
+        if (use_cases.current_runtime_is_connecting_or_recovering()) {
+          auto status = frontend_status_from_controller_snapshot(
+              use_cases.latest_status().value_or(
+                  exv::core::TunnelStatusSnapshot{}),
+              cfg);
+          apply_desktop_connect_job_status_impl(&status, true);
+          apply_desktop_connect_error_impl(&status);
+          timing.finish(true, "stage=attached_current_runtime");
+          return status;
         }
 
         namespace conn_attempt = exv::connection_attempt;
@@ -792,6 +1044,7 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
           details["lock_path"] =
               platform::get_config_dir() + "/connect-attempt.lock";
           details["owner_pid"] = attempt_result.record.owner_pid;
+          details["helper_pid"] = attempt_result.record.helper_pid;
           details["attempt_id"] = attempt_result.record.attempt_id;
           details["created_at_unix_ms"] =
               attempt_result.record.created_at_unix_ms;
@@ -804,9 +1057,16 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
                 platform::is_process_alive(attempt_result.record.owner_pid);
           }
           details["owner_alive"] = owner_alive;
+          bool helper_alive = false;
+          if (attempt_result.record.helper_pid > 0) {
+            helper_alive =
+                platform::is_process_alive(attempt_result.record.helper_pid);
+          }
+          details["helper_alive"] = helper_alive;
 
           const bool stale_detected =
-              !owner_alive && attempt_result.record.owner_pid > 0;
+              !owner_alive && attempt_result.record.owner_pid > 0 &&
+              attempt_result.record.helper_pid <= 0;
           details["stale_attempt_detected"] = stale_detected;
 
           if (attempt_result.record.created_at_unix_ms > 0) {
@@ -837,26 +1097,66 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
               return resp;
             }
           } else {
-            timing.finish(false, "stage=connection_attempt");
-            nlohmann::json resp = error(user_message, attempt_result.code);
-            resp["current_attempt"] = details;
-            return resp;
+            const bool terminal_runtime_reconciled =
+                exv::core::tunnel_use_cases()
+                    .reconcile_terminal_connection_attempt(
+                        platform::get_config_dir(),
+                        attempt_result.record.attempt_id,
+                        attempt_result.record.owner_pid,
+                        "connect_attempt_active_terminal_runtime");
+            details["terminal_runtime_reconciled"] =
+                terminal_runtime_reconciled;
+            if (terminal_runtime_reconciled) {
+              conn_attempt::AcquireResult retry =
+                  conn_attempt::try_acquire(attempt_opts);
+              if (retry.acquired) {
+                exv::observability::LogFacade::event(
+                    "INFO", "app_api",
+                    "desktop.connect.connection_attempt.reconcile_retry",
+                    "Retried connection attempt acquisition after terminal "
+                    "runtime reconciliation",
+                    {{"reason", "connect_attempt_active_terminal_runtime"},
+                     {"code", retry.code},
+                     {"retry_acquired", "true"}});
+                timing.mark("connection_attempt_retry",
+                            "acquired=true terminal_runtime_reconcile=true");
+                attempt_result = std::move(retry);
+              } else {
+                exv::observability::LogFacade::event(
+                    "WARN", "app_api",
+                    "desktop.connect.connection_attempt.reconcile_retry_failed",
+                    "Connection attempt acquisition retry failed after terminal "
+                    "runtime reconciliation",
+                    {{"reason", "connect_attempt_active_terminal_runtime"},
+                     {"code", retry.code},
+                     {"retry_acquired", "false"}});
+                timing.finish(false,
+                              "stage=connection_attempt terminal_reconcile_"
+                              "retry_failed code=" +
+                                  retry.code);
+                nlohmann::json resp = error(
+                    retry.message.empty() ? user_message : retry.message,
+                    retry.code.empty() ? attempt_result.code : retry.code);
+                resp["current_attempt"] = details;
+                return resp;
+              }
+            } else {
+              timing.finish(false, "stage=connection_attempt");
+              nlohmann::json resp = error(user_message, attempt_result.code);
+              resp["current_attempt"] = details;
+              return resp;
+            }
           }
         }
 
         auto attempt_id = attempt_result.record.attempt_id;
-        exv::core::VpnConnectJobState state;
-        {
-          auto &tuc = exv::core::tunnel_use_cases();
-          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
-          state = tuc.connect_jobs().submit_connect(
-              pending,
-              [cfg, password, attempt_id](std::stop_token stop,
-                                          std::uint64_t) mutable {
-                if (stop.stop_requested()) return;
-                run_desktop_connect_job(cfg, password, attempt_id, stop);
-              });
-        }
+        auto state = exv::core::tunnel_use_cases().connect_jobs().submit_connect(
+            pending,
+            [cfg, password, attempt_id](std::stop_token stop,
+                                        std::uint64_t epoch) mutable {
+              if (stop.stop_requested()) return;
+              run_desktop_connect_job(cfg, password, attempt_id, stop, epoch);
+            });
         timing.finish(true, "stage=accepted");
         return connect_state_json(state);
       });
@@ -934,16 +1234,12 @@ void register_desktop_vpn_actions(exv::core_api::DesktopRpcAdapter &adapter) {
         config::ConfigManager mgr = make_config_manager();
         Config cfg = mgr.load();
         auto controller = get_tunnel_controller_if_exists();
-        {
-          auto &tuc = exv::core::tunnel_use_cases();
-          std::lock_guard<std::mutex> lock(tuc.connect_jobs_mutex());
-          auto active = tuc.connect_jobs().snapshot();
-          if (active.active) {
-            auto state =
-                tuc.connect_jobs().submit_disconnect("user_cancelled_connect");
-            clear_desktop_connect_error();
-            return connect_state_json(state);
-          }
+        auto &jobs = exv::core::tunnel_use_cases().connect_jobs();
+        auto active = jobs.snapshot();
+        if (active.active) {
+          auto state = jobs.submit_disconnect("user_cancelled_connect");
+          clear_desktop_connect_error();
+          return connect_state_json(state);
         }
         if (controller) {
           controller->disconnect(exv::core::DisconnectReason::UserRequested);

@@ -1,5 +1,7 @@
 #include "core/tunnel_controller/tunnel_controller_impl.hpp"
 
+#include "platform/common/network_diagnostics.hpp"
+
 #include <algorithm>
 #include <exception>
 #include <sstream>
@@ -230,6 +232,12 @@ bool TunnelController::Impl::apply_tunnel_config_for_session(
                               {"dns_count",
                                std::to_string(config.dns.servers.size())}});
 
+            log_tunnel_event(
+                "INFO", "network.diagnostics.route_snapshot",
+                "Captured network adapter diagnostics",
+                exv::platform::network_diagnostics_route_snapshot_fields(
+                    vpn_cfg_.server));
+
             if (!net_ops_->apply_tunnel_config(device, config)) {
                 timing_.timer.end(ConnectTiming::NETWORK_CONFIG);
                 auto platform_error = net_ops_->last_error();
@@ -391,9 +399,31 @@ void TunnelController::Impl::do_connect() {
             transition_to(TunnelPhase::Failed);
             return;
         }
-        if (vpn_password_.empty()) {
-            log_tunnel_event("WARN", "vpn.config.missing",
-                             "Native engine credentials unavailable; using fallback connect flow");
+        const bool has_prepared_native_session =
+            prepared_native_handshake_.has_value();
+        const bool should_run_native_session =
+            vpn_configured_ || has_prepared_native_session;
+        const bool allow_placeholder_fallback =
+            intent_.profile_id.value.empty() ||
+            intent_.profile_id.value == "default";
+        const bool missing_native_credentials =
+            (vpn_configured_ && vpn_password_.empty() &&
+             !has_prepared_native_session) ||
+            (!should_run_native_session && !allow_placeholder_fallback);
+        if (missing_native_credentials) {
+            log_tunnel_event("ERROR", "vpn.config.missing",
+                             "Native engine credentials unavailable");
+            ErrorInfo err;
+            err.domain = "config";
+            err.code = "native_credentials_missing";
+            err.message =
+                "Native VPN credentials are missing; cannot start VPN session.";
+            err.recoverable = true;
+            err.recommended_action =
+                "Enter your VPN password and retry the connection.";
+            set_error(err);
+            transition_to(TunnelPhase::Failed);
+            return;
         }
 
         // Step 2 — PreparingHelper: start helper session
@@ -401,9 +431,86 @@ void TunnelController::Impl::do_connect() {
         transition_to(TunnelPhase::PreparingHelper);
 
         try {
-            log_tunnel_event("INFO", "helper.hello.starting",
-                             "Requesting helper status");
-            auto hello = helper_->hello(exv::helper::HelloRequest{});
+            if (!helper_->is_connected() && !helper_->connect()) {
+                helper_connected_seen_ = false;
+                helper_status_override_ = "unavailable";
+                log_tunnel_event("ERROR", "helper.connect.failed",
+                                 "Helper connection could not be established",
+                                 {{"stage", "hello"}});
+                auto err = CoreErrorMapper::from_helper_error(
+                    "helper_connect_failed",
+                    "Helper connection could not be established");
+                err.recoverable = true;
+                err.recommended_action = "repair_service";
+                set_error(err);
+                update_snapshot();
+                timing_.timer.end(ConnectTiming::HELPER_PREPARE);
+                transition_to(TunnelPhase::Failed);
+                return;
+            }
+
+            auto request_hello = [this](int attempt) {
+                log_tunnel_event("INFO", "helper.hello.starting",
+                                 "Requesting helper status",
+                                 {{"attempt", std::to_string(attempt)}});
+                return helper_->hello(exv::helper::HelloRequest{});
+            };
+
+            auto hello = request_hello(1);
+            if (!helper_->is_connected()) {
+                log_tunnel_event(
+                    "WARN", "helper.hello.disconnected",
+                    "Helper disconnected during initialization Hello",
+                    {{"attempt", "1"}});
+                log_tunnel_event(
+                    "INFO", "helper.hello.retrying",
+                    "Retrying helper initialization Hello after reconnect",
+                    {{"attempt", "2"}});
+                if (helper_->connect()) {
+                    hello = request_hello(2);
+                    if (!helper_->is_connected()) {
+                        log_tunnel_event(
+                            "WARN", "helper.hello.disconnected",
+                            "Helper disconnected during retried initialization Hello",
+                            {{"attempt", "2"}});
+                    }
+                } else {
+                    log_tunnel_event(
+                        "WARN", "helper.hello.retry_connect_failed",
+                        "Helper reconnect failed before retried initialization Hello",
+                        {{"attempt", "2"}});
+                }
+            }
+            if (!helper_->is_connected()) {
+                helper_connected_seen_ = false;
+                helper_status_override_ = "unavailable";
+                auto err = CoreErrorMapper::from_helper_error(
+                    "helper_hello_disconnected",
+                    "Helper disconnected while responding to Hello");
+                err.recoverable = true;
+                err.recommended_action = "repair_service";
+                set_error(err);
+                update_snapshot();
+                timing_.timer.end(ConnectTiming::HELPER_PREPARE);
+                transition_to(TunnelPhase::Failed);
+                return;
+            }
+            if (hello.capabilities.empty()) {
+                helper_connected_seen_ = false;
+                helper_status_override_ = "unavailable";
+                log_tunnel_event("WARN", "helper.hello.failed",
+                                 "Helper Hello returned an empty response");
+                auto err = CoreErrorMapper::from_helper_error(
+                    "helper_hello_failed",
+                    "Helper Hello returned an empty response");
+                err.recoverable = true;
+                err.recommended_action = "repair_service";
+                set_error(err);
+                update_snapshot();
+                timing_.timer.end(ConnectTiming::HELPER_PREPARE);
+                transition_to(TunnelPhase::Failed);
+                return;
+            }
             helper_connected_seen_ = true;
             helper_mode_ = helper_mode_wire_name(hello.mode);
             helper_endpoint_ = hello.startup_context.endpoint;
@@ -460,7 +567,7 @@ void TunnelController::Impl::do_connect() {
         timing_.timer.start(ConnectTiming::AUTH);
         transition_to(TunnelPhase::Authenticating);
 
-        if (!vpn_password_.empty()) {
+        if (should_run_native_session) {
             // Real engine path — start CoreSessionRunner.
             // The event callback is already wired up (set in init_runner).
             bool ok = false;
@@ -540,7 +647,36 @@ void TunnelController::Impl::do_connect() {
 
 bool TunnelController::Impl::acquire_core_lease() {
         if (!core_lease_id_.empty()) {
-            return true;
+            if (helper_ && helper_->is_connected()) {
+                try {
+                    exv::helper::KeepAliveRequest keep_alive_req;
+                    keep_alive_req.lease_id = core_lease_id_;
+                    keep_alive_req.state = tunnel_phase_wire_name(phase_);
+                    auto keep_alive_resp = helper_->keep_alive(keep_alive_req);
+                    if (keep_alive_resp.ok) {
+                        return true;
+                    }
+                    log_tunnel_event(
+                        "WARN", "core_lease.reuse.rejected",
+                        "Existing helper CoreLease was not accepted; reacquiring",
+                        {{"warning", keep_alive_resp.warning.value_or("")},
+                         {"phase", tunnel_phase_wire_name(phase_)}});
+                } catch (const std::exception& e) {
+                    log_tunnel_event(
+                        "WARN", "core_lease.reuse.failed",
+                        "Existing helper CoreLease validation failed; reacquiring",
+                        {{"error", e.what()},
+                         {"phase", tunnel_phase_wire_name(phase_)}});
+                }
+            } else {
+                log_tunnel_event(
+                    "WARN", "core_lease.reuse.disconnected",
+                    "Existing helper CoreLease cannot be reused because helper is disconnected",
+                    {{"phase", tunnel_phase_wire_name(phase_)}});
+            }
+            core_lease_id_.clear();
+            stop_core_lease_keepalive();
+            update_snapshot();
         }
 
         exv::helper::AcquireCoreLeaseRequest req;
@@ -554,10 +690,24 @@ bool TunnelController::Impl::acquire_core_lease() {
             auto resp = helper_->acquire_core_lease(req);
             if (!resp.accepted || resp.lease_id.empty()) {
                 helper_status_override_ = "core_lease_failed";
+                const std::string code =
+                    resp.error_code.empty() ? "core_lease_failed" : resp.error_code;
+                const std::string message =
+                    resp.error_message.empty()
+                        ? "Helper rejected CoreLease acquisition"
+                        : resp.error_message;
+                log_tunnel_event("WARN", "core_lease.acquire.rejected",
+                                 "Helper rejected CoreLease acquisition",
+                                 {{"code", code}, {"message", message}});
                 auto err = CoreErrorMapper::from_helper_error(
-                    "core_lease_failed",
-                    "Helper rejected CoreLease acquisition");
-                err.recoverable = false;
+                    code, message);
+                const bool repairable_core_lease_error =
+                    code == "core_lease_failed" ||
+                    code == "core_lease_conflict" ||
+                    code == "core_lease_unauthorized";
+                err.recommended_action =
+                    repairable_core_lease_error ? "repair_service" : "view_logs";
+                err.recoverable = repairable_core_lease_error;
                 set_error(err);
                 update_snapshot();
                 return false;

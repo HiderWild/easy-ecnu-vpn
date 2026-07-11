@@ -13,6 +13,7 @@ inline platform::ConfigView to_platform_config_view(const Config &cfg) {
   view.mtu = cfg.mtu;
   view.useragent = cfg.useragent;
   view.disable_dtls = cfg.disable_dtls;
+  view.dtls_mode = cfg.dtls_mode;
   view.extra_args = cfg.extra_args;
   view.log_file = cfg.log_file;
   view.vpn_engine = cfg.vpn_engine;

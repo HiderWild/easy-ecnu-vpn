@@ -127,7 +127,8 @@ bool AsyncHostBridge::accept_message(std::string message_json) {
     return true;
   }
 
-  if (action == "window.setMode" || action == "window.resolveClosePrompt") {
+  if (action == "window.setMode" || action == "window.resolveClosePrompt" ||
+      action == "window.hideToTray" || action == "shell.notify") {
     post_response_(ok_response(id));
     return true;
   }

@@ -4,6 +4,7 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <sddl.h>
+#include <string>
 #include <vector>
 #endif
 
@@ -51,7 +52,11 @@ public:
     }
 
     if (hPipe_ == INVALID_HANDLE_VALUE) {
-      exv::observability::LogFacade::error("Helper: CreateNamedPipe failed");
+      exv::observability::LogFacade::event(
+          "ERROR", "helper", "helper.pipe.create_failed",
+          "Helper failed to create named pipe",
+          {{"endpoint", path},
+           {"win32_error", std::to_string(GetLastError())}});
       return false;
     }
 
@@ -67,6 +72,10 @@ public:
     if (!ConnectNamedPipe(hPipe_, NULL)) {
       DWORD err = GetLastError();
       if (err != ERROR_PIPE_CONNECTED) {
+        exv::observability::LogFacade::event(
+            "WARN", "helper", "helper.pipe.accept_failed",
+            "Helper failed while accepting named pipe client",
+            {{"win32_error", std::to_string(err)}});
         return false;
       }
     }
@@ -134,12 +143,21 @@ public:
       while (true) {
         DWORD available = 0;
         if (!PeekNamedPipe(hPipe_, NULL, 0, NULL, &available, NULL)) {
+          exv::observability::LogFacade::event(
+              "WARN", "helper", "helper.pipe.peek_failed",
+              "Helper failed while waiting for initial request bytes",
+              {{"win32_error", std::to_string(GetLastError())},
+               {"timeout_ms", std::to_string(timeout_ms)}});
           return "";
         }
         if (available > 0) {
           break;
         }
         if (static_cast<int>(GetTickCount() - start) >= timeout_ms) {
+          exv::observability::LogFacade::event(
+              "WARN", "helper", "helper.pipe.initial_request_timeout",
+              "Helper timed out waiting for initial request bytes",
+              {{"timeout_ms", std::to_string(timeout_ms)}});
           return "";
         }
         Sleep(25);
@@ -148,8 +166,21 @@ public:
 
     while (true) {
       BOOL success = ReadFile(hPipe_, buffer, sizeof(buffer) - 1, &bytesRead, NULL);
-      if (!success || bytesRead == 0)
+      if (!success || bytesRead == 0) {
+        const DWORD err = success ? ERROR_SUCCESS : GetLastError();
+        const bool expected_disconnect =
+            timeout_ms < 0 &&
+            (err == ERROR_BROKEN_PIPE || err == ERROR_PIPE_NOT_CONNECTED ||
+             err == ERROR_NO_DATA);
+        if (!expected_disconnect) {
+          exv::observability::LogFacade::event(
+              "WARN", "helper", "helper.pipe.read_failed",
+              "Helper failed while reading named pipe request",
+              {{"win32_error", std::to_string(err)},
+               {"bytes_read", std::to_string(bytesRead)}});
+        }
         break;
+      }
       raw.append(buffer, bytesRead);
       if (raw.find('\n') != std::string::npos)
         break;
@@ -167,9 +198,21 @@ public:
     payload.push_back('\n');
     DWORD bytesWritten = 0;
     BOOL success = WriteFile(hPipe_, payload.c_str(),
-                             static_cast<DWORD>(payload.size()), &bytesWritten, NULL);
-    FlushFileBuffers(hPipe_);
-    return success && bytesWritten == payload.size();
+                              static_cast<DWORD>(payload.size()), &bytesWritten, NULL);
+    const DWORD write_error = success ? ERROR_SUCCESS : GetLastError();
+    BOOL flushed = success ? FlushFileBuffers(hPipe_) : FALSE;
+    const DWORD flush_error = flushed ? ERROR_SUCCESS : GetLastError();
+    if (!success || bytesWritten != payload.size() || !flushed) {
+      exv::observability::LogFacade::event(
+          "ERROR", "helper", "helper.pipe.write_failed",
+          "Helper failed while writing named pipe response",
+          {{"write_ok", success ? "true" : "false"},
+           {"flush_ok", flushed ? "true" : "false"},
+           {"win32_error", std::to_string(success ? flush_error : write_error)},
+           {"bytes_expected", std::to_string(payload.size())},
+           {"bytes_written", std::to_string(bytesWritten)}});
+    }
+    return success && bytesWritten == payload.size() && flushed;
 #else
     (void)response;
     return false;

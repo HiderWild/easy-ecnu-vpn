@@ -500,6 +500,10 @@ void to_json(json& j, const AcquireCoreLeaseResponse& resp) {
     j = json{{"accepted", resp.accepted},
              {"lease_id", resp.lease_id},
              {"mode", resp.mode}};
+    if (!resp.error_code.empty())
+        j["error_code"] = resp.error_code;
+    if (!resp.error_message.empty())
+        j["error_message"] = resp.error_message;
 }
 
 void from_json(const json& j, AcquireCoreLeaseResponse& resp) {
@@ -511,6 +515,8 @@ AcquireCoreLeaseResponse acquire_core_lease_response_from_json(const json& j) {
     resp.accepted = j.value("accepted", false);
     resp.lease_id = j.value("lease_id", "");
     resp.mode = j.value("mode", "");
+    resp.error_code = j.value("error_code", "");
+    resp.error_message = j.value("error_message", "");
     return resp;
 }
 

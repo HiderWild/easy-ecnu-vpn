@@ -21,7 +21,9 @@ struct VpnEngineConfig {
   std::string windows_tunnel_driver = "auto";
   std::string windows_tap_interface;
   bool auto_reconnect = true;
-  bool disable_dtls = true;
+  int retry_limit = 0;
+  bool disable_dtls = false;
+  std::string dtls_mode = "auto";
 };
 
 struct VpnEngineEvent {
@@ -37,6 +39,11 @@ struct VpnEngineStatus {
   int pid = -1;
   std::string interface_name;
   std::string internal_ip;
+  std::string dtls_mode = "auto";
+  std::string active_data_channel = "cstp_tls";
+  std::string dtls_state = "disabled";
+  std::string dtls_fallback_reason;
+  int dtls_fallback_count = 0;
   std::string error_code;
   std::string error_message;
 };

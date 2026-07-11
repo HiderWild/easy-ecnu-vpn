@@ -616,9 +616,10 @@ public:
       return result;
     }
     if (received == SOCKET_ERROR) {
-      result.result =
-          invalid("tls_read_failed",
-                  wsa_error_message("recv", WSAGetLastError()));
+      const int native_error = WSAGetLastError();
+      const char *code =
+          native_error == WSAETIMEDOUT ? "tls_read_timeout" : "tls_read_failed";
+      result.result = invalid(code, wsa_error_message("recv", native_error));
       return result;
     }
 

@@ -2,7 +2,12 @@
 import { computed, onMounted, ref } from 'vue'
 import { EthernetPort } from 'lucide-vue-next'
 import ToggleSwitch from '../../components/ToggleSwitch.vue'
-import { useConfigStore, type CoreInspection, type SettingsConfig } from '../../stores/config'
+import {
+  useConfigStore,
+  type CoreInspection,
+  type DtlsSettingsMode,
+  type SettingsConfig,
+} from '../../stores/config'
 import { useUiStore } from '../../stores/ui'
 import { normalizeError } from '../../stores/vpn'
 
@@ -24,6 +29,7 @@ const coreMaintenanceBusy = ref(false)
 const fallbackSettingsDraft: SettingsConfig = {
   mtu: 1400,
   dtls: true,
+  dtls_mode: 'auto',
   extra_args: '',
   log_path: '',
   webui_port: 18080,
@@ -33,22 +39,46 @@ const fallbackSettingsDraft: SettingsConfig = {
   windows_tunnel_driver: 'auto',
   windows_tap_interface: '',
   auto_reconnect: true,
-  retry_limit: -1,
+  retry_limit: 0,
   minimal_mode: false,
   service_install_prompt_seen: false,
   minimal_install_service_before_connect: true,
+  minimize_to_tray_on_connect: false,
   include_class_a_private_routes: false,
   include_class_b_private_routes: false,
   launch_at_login: false,
   auto_connect_on_launch: false,
+  silent_startup: false,
+  connection_state_notifications: false,
 }
 
 const settingsForm = computed(() => props.settingsDraft ?? fallbackSettingsDraft)
 
-const dtlsModel = computed({
-  get: () => settingsForm.value.dtls,
-  set: (value: boolean) => updateSettingField('dtls', value),
+const dtlsModeOptions: Array<{ value: DtlsSettingsMode; label: string; help: string }> = [
+  { value: 'auto', label: '自动', help: '连接成功后优先尝试 DTLS，失败会回落 CSTP/TLS。' },
+  { value: 'enabled', label: '开启', help: '每次连接成功后都尝试 DTLS。' },
+  { value: 'disabled', label: '关闭', help: '仅使用 CSTP/TLS。' },
+]
+
+const dtlsModeModel = computed<DtlsSettingsMode>({
+  get: () => settingsForm.value.dtls_mode ?? (settingsForm.value.dtls ? 'auto' : 'disabled'),
+  set: (value) => {
+    emit('update:settingsDraft', {
+      ...settingsForm.value,
+      dtls_mode: value,
+      dtls: value !== 'disabled',
+    })
+  },
 })
+
+const dtlsModeHelp = computed(() =>
+  dtlsModeOptions.find((option) => option.value === dtlsModeModel.value)?.help ??
+  dtlsModeOptions[0].help,
+)
+
+function setDtlsMode(value: DtlsSettingsMode) {
+  dtlsModeModel.value = value
+}
 
 const autoReconnectModel = computed({
   get: () => settingsForm.value.auto_reconnect,
@@ -70,7 +100,7 @@ function updateSettingField<K extends keyof SettingsConfig>(key: K, value: Setti
 
 function updateNumberField(key: 'mtu' | 'retry_limit', event: Event) {
   const value = Number((event.target as HTMLInputElement).value)
-  updateSettingField(key, value)
+  updateSettingField(key, key === 'retry_limit' ? Math.max(0, Math.trunc(value || 0)) : value)
 }
 
 async function inspectCoreSilently() {
@@ -141,12 +171,29 @@ onMounted(async () => {
         />
       </div>
 
-      <div class="flex items-center justify-between rounded-lg border border-border bg-bg/40 px-4 py-3">
-        <div>
-          <p class="text-sm text-foreground">DTLS</p>
-          <p class="text-xs text-muted">当前原生连接使用 CSTP-only；DTLS 后端加入前不会启用。</p>
+      <div class="rounded-lg border border-border bg-bg/40 px-4 py-3">
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div class="min-w-0">
+            <p class="text-sm text-foreground">DTLS</p>
+            <p class="text-xs text-muted">{{ dtlsModeHelp }}</p>
+          </div>
+          <div class="inline-grid w-full grid-cols-3 rounded-lg border border-border bg-bg p-1 text-xs sm:w-auto">
+            <button
+              v-for="option in dtlsModeOptions"
+              :key="option.value"
+              type="button"
+              :class="[
+                'min-w-16 rounded-md px-3 py-1.5 font-medium transition-colors',
+                dtlsModeModel === option.value
+                  ? 'bg-accent text-white'
+                  : 'text-muted hover:text-foreground',
+              ]"
+              @click="setDtlsMode(option.value)"
+            >
+              {{ option.label }}
+            </button>
+          </div>
         </div>
-        <ToggleSwitch v-model="dtlsModel" />
       </div>
 
       <div class="flex items-center justify-between rounded-lg border border-border bg-bg/40 px-4 py-3">
@@ -162,11 +209,12 @@ onMounted(async () => {
         <input
           :value="settingsForm.retry_limit"
           type="number"
-          min="-1"
-          class="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-foreground transition-colors focus:border-accent/50 focus:outline-none"
+          min="0"
+          :disabled="!autoReconnectModel"
+          class="w-full rounded-lg border border-border bg-bg px-3 py-2 text-sm text-foreground transition-colors focus:border-accent/50 focus:outline-none disabled:cursor-not-allowed disabled:opacity-60"
           @input="updateNumberField('retry_limit', $event)"
         />
-        <p class="mt-1 text-xs text-muted">-1 表示无限重连；0 表示不重连；正整数表示最大次数。</p>
+        <p class="mt-1 text-xs text-muted">开启断线重连时，0 表示无限重连；关闭断线重连后不会自动重连。</p>
       </div>
     </div>
   </section>

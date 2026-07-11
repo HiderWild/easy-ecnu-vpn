@@ -1,7 +1,7 @@
 {
   "name": "webui",
   "private": true,
-  "version": "3.3.6",
+  "version": "3.3.7",
   "type": "module",
   "scripts": {
     "preinstall": "node -e \"const ua = process.env.npm_config_user_agent || ''; if (!ua.startsWith('pnpm/')) { console.error('Use pnpm instead of npm for this project.'); process.exit(1); }\"",

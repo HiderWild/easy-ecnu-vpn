@@ -53,6 +53,7 @@ Var FinishCreateDesktopShortcutCheckbox
 Var FinishLaunchAppCheckbox
 Var UninstallClearUserData
 Var UninstallClearUserDataCheckbox
+Var StableHelperRoot
 
 Function un.onInit
   StrCpy $UninstallClearUserData ${BST_UNCHECKED}
@@ -74,6 +75,16 @@ Function WriteHelperServiceMaintenanceScript
   FileWrite $0 "Stop-Service -Name '${SERVICE_NAME}' -Force$\r$\n"
   FileWrite $0 "Stop-Process -Name exv-helper -Force$\r$\n"
   FileWrite $0 "sc.exe delete ${SERVICE_NAME} | Out-Null$\r$\n"
+  FileWrite $0 "$$programData = [Environment]::GetFolderPath('CommonApplicationData')$\r$\n"
+  FileWrite $0 "if ([string]::IsNullOrWhiteSpace($$programData)) { $$programData = 'C:\ProgramData' }$\r$\n"
+  FileWrite $0 "$$stableHelperRoot = Join-Path $$programData 'EXV\Helper'$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'exv-helper.exe') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'wintun.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libgcc_s_seh-1.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libstdc++-6.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libwinpthread-1.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath $$stableHelperRoot -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$programData 'EXV') -Force -ErrorAction SilentlyContinue$\r$\n"
   FileClose $0
 FunctionEnd
 
@@ -231,6 +242,16 @@ Function un.WriteHelperServiceMaintenanceScript
   FileWrite $0 "Stop-Service -Name '${SERVICE_NAME}' -Force$\r$\n"
   FileWrite $0 "Stop-Process -Name exv-helper -Force$\r$\n"
   FileWrite $0 "sc.exe delete ${SERVICE_NAME} | Out-Null$\r$\n"
+  FileWrite $0 "$$programData = [Environment]::GetFolderPath('CommonApplicationData')$\r$\n"
+  FileWrite $0 "if ([string]::IsNullOrWhiteSpace($$programData)) { $$programData = 'C:\ProgramData' }$\r$\n"
+  FileWrite $0 "$$stableHelperRoot = Join-Path $$programData 'EXV\Helper'$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'exv-helper.exe') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'wintun.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libgcc_s_seh-1.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libstdc++-6.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$stableHelperRoot 'libwinpthread-1.dll') -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath $$stableHelperRoot -Force -ErrorAction SilentlyContinue$\r$\n"
+  FileWrite $0 "Remove-Item -LiteralPath (Join-Path $$programData 'EXV') -Force -ErrorAction SilentlyContinue$\r$\n"
   FileClose $0
 FunctionEnd
 
@@ -361,10 +382,34 @@ Function un.RunHelperServiceUninstallMaintenance
   done:
 FunctionEnd
 
-Function un.RemoveStableHelperPayload
+Function un.RemoveInstalledWebViewPayload
   RMDir /r "$INSTDIR\exv-ui.exe.WebView2"
+FunctionEnd
+
+Function un.ResolveStableHelperRoot
+  ReadEnvStr $StableHelperRoot "ProgramData"
+  StrCmp $StableHelperRoot "" 0 done
+    StrCpy $StableHelperRoot "C:\ProgramData"
+  done:
+FunctionEnd
+
+Function un.RemoveStableHelperPayload
+  ; Stable helper payload is machine-scoped under ProgramData.
+  Call un.ResolveStableHelperRoot
+  Delete "$StableHelperRoot\EXV\Helper\exv-helper.exe"
+  Delete "$StableHelperRoot\EXV\Helper\wintun.dll"
+  Delete "$StableHelperRoot\EXV\Helper\libgcc_s_seh-1.dll"
+  Delete "$StableHelperRoot\EXV\Helper\libstdc++-6.dll"
+  Delete "$StableHelperRoot\EXV\Helper\libwinpthread-1.dll"
+  RMDir "$StableHelperRoot\EXV\Helper"
+  RMDir "$StableHelperRoot\EXV"
+FunctionEnd
+
+Function un.RemoveLegacyUserLocalHelperPayload
+  ; Legacy user-local helper cleanup for pre-ProgramData installs.
   Delete "$LOCALAPPDATA\EXV\Helper\exv-helper.exe"
   RMDir "$LOCALAPPDATA\EXV\Helper"
+  RMDir "$LOCALAPPDATA\EXV"
 FunctionEnd
 
 Function un.RunUserDataCleanup
@@ -470,9 +515,10 @@ Section "Uninstall"
   Call un.RunHelperServiceUninstallMaintenance
   Call un.RunHelperProcessCleanup
   Call un.RunLegacyCompatibilityCleanup
+  Call un.RemoveInstalledWebViewPayload
   Call un.RemoveStableHelperPayload
+  Call un.RemoveLegacyUserLocalHelperPayload
   Call un.RunUserDataCleanup
-  RMDir "$LOCALAPPDATA\EXV"
   Delete "$DESKTOP\EXV.lnk"
   Delete "$SMPROGRAMS\EXV\EXV.lnk"
   Delete "$SMPROGRAMS\EXV\Uninstall EXV.lnk"

@@ -25,6 +25,8 @@ bool is_allowed_host_action(std::string_view action) {
       action == "window.getClosePreference" ||
       action == "window.setClosePreference" ||
       action == "window.resetClosePreference" ||
+      action == "window.hideToTray" ||
+      action == "shell.notify" ||
       action == "core.restart") {
     return true;
   }

@@ -8,8 +8,8 @@ struct WindowBounds {
 };
 
 inline constexpr int kWindowShadowMarginPx = 0;
-inline constexpr WindowBounds kAppSurfaceAdvancedWindowBounds{972, 563};
-inline constexpr WindowBounds kAppSurfaceMinimalWindowBounds{302, 118};
+inline constexpr WindowBounds kAppSurfaceAdvancedWindowBounds{879, 563};
+inline constexpr WindowBounds kAppSurfaceMinimalWindowBounds{328, 136};
 inline constexpr WindowBounds kElectronAdvancedWindowBounds{
     kAppSurfaceAdvancedWindowBounds.width + kWindowShadowMarginPx * 2,
     kAppSurfaceAdvancedWindowBounds.height + kWindowShadowMarginPx * 2};

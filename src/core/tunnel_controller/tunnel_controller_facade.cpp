@@ -2,6 +2,17 @@
 
 namespace exv::core {
 
+namespace {
+
+ReconnectConfig reconnect_config_for_vpn_config(ReconnectConfig base,
+                                                const exv::Config &cfg) {
+    base.max_attempts =
+        exv::config_detail::normalize_retry_limit(cfg.retry_limit);
+    return base;
+}
+
+} // namespace
+
 // =========================================================================
 // TunnelController — pimpl delegation
 // =========================================================================
@@ -14,7 +25,8 @@ TunnelController::TunnelController(
 {
     impl_->helper_          = std::move(helper);
     impl_->net_ops_         = std::move(net_ops);
-    impl_->reconnect_policy_ = ReconnectPolicy(reconnect_config);
+    impl_->reconnect_config_ = reconnect_config;
+    impl_->reconnect_policy_ = ReconnectPolicy(impl_->reconnect_config_);
 
     // Wire the CoreSessionRunner event callback to feed back into
     // TunnelController::on_event(), driving the state machine.
@@ -46,6 +58,10 @@ TunnelController::~TunnelController() {
 void TunnelController::set_vpn_config(const exv::Config& cfg,
                                       const std::string& plaintext_password) {
     impl_->vpn_cfg_      = cfg;
+    impl_->reconnect_config_ =
+        reconnect_config_for_vpn_config(impl_->reconnect_config_, cfg);
+    impl_->reconnect_policy_ = ReconnectPolicy(impl_->reconnect_config_);
+    impl_->vpn_configured_ = true;
     impl_->vpn_password_ = plaintext_password;
     impl_->prepared_native_handshake_.reset();
 }
@@ -56,6 +72,14 @@ void TunnelController::set_prepared_native_handshake(
     impl_->prepared_native_handshake_ =
         Impl::PreparedNativeHandshake{std::move(engine_config),
                                       std::move(handshake)};
+}
+
+void TunnelController::set_runtime_identity(std::uint64_t runtime_epoch,
+                                            std::uint64_t controller_id) {
+    impl_->runtime_epoch_ = runtime_epoch;
+    impl_->controller_id_ = controller_id;
+    impl_->update_snapshot();
+    impl_->notify_status();
 }
 
 // ------------------------------------------------------------------
@@ -193,6 +217,10 @@ void TunnelController::on_event(TunnelEvent event) {
 // ------------------------------------------------------------------
 // Callback
 // ------------------------------------------------------------------
+
+void TunnelController::set_recovery_callback(RecoveryCallback cb) {
+    impl_->recovery_callback_ = std::move(cb);
+}
 
 void TunnelController::set_status_callback(StatusCallback cb) {
     impl_->status_callback_ = std::move(cb);

@@ -2,7 +2,6 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import { Power } from 'lucide-vue-next'
 import PasswordField from './PasswordField.vue'
-import ToggleSwitch from './ToggleSwitch.vue'
 import { useConfigStore } from '../stores/config'
 import { useUiStore } from '../stores/ui'
 import { useVpnStore } from '../stores/vpn'
@@ -30,10 +29,35 @@ const statusText = computed(() => {
   return '未连接'
 })
 
+const powerButtonLabel = computed(() => {
+  if (connecting.value) return '取消连接'
+  if (connected.value) return '断开连接'
+  return '连接'
+})
+
 const powerClass = computed(() => {
-  if (connecting.value || busy.value) return 'bg-warning text-white shadow-warning/20'
-  if (connected.value) return 'bg-accent text-white shadow-accent/20'
-  return 'bg-destructive text-white shadow-destructive/20'
+  if (connecting.value || busy.value) return 'is-warning'
+  if (connected.value) return 'is-connected'
+  return 'is-disconnected'
+})
+
+const uptimeFormatted = computed(() => {
+  const total = vpn.displayUptimeSeconds
+  const h = Math.floor(total / 3600)
+  const m = Math.floor((total % 3600) / 60)
+  const s = total % 60
+  return h > 0
+    ? `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+    : `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
+})
+
+const internalIpText = computed(() => vpn.status?.internal_ip || '--')
+const usernameText = computed(() => vpn.status?.username || username.value || 'EXV')
+const sessionModeLabel = computed(() => {
+  if (vpn.currentSessionMode === 'helper') return '服务'
+  if (vpn.currentSessionMode === 'elevated') return '临时'
+  if (vpn.currentSessionMode === 'direct') return '直连'
+  return '待机'
 })
 
 onMounted(async () => {
@@ -72,10 +96,6 @@ watch(installServiceBeforeConnect, (next) => {
   if (next === config.settings.minimal_install_service_before_connect) return
   void config.saveSettings({ minimal_install_service_before_connect: next })
 })
-
-function switchToAdvancedMode() {
-  void config.saveSettings({ minimal_mode: false })
-}
 
 async function saveAuthForConnect() {
   const nextUsername = username.value.trim()
@@ -152,141 +172,303 @@ async function handlePowerClick() {
 </script>
 
 <template>
-  <main class="flex h-full bg-bg px-2.5 py-2.5 text-foreground">
-    <div
-      v-if="connectedLayout"
-      class="relative flex min-h-0 w-full items-center justify-center"
-    >
-      <div class="flex flex-col items-center">
+  <main
+    class="minimal-shell"
+    :class="{
+      'is-connecting': connecting,
+      'is-disconnecting': vpn.disconnectInFlight,
+      'is-connected': connectedLayout,
+    }"
+  >
+    <div class="minimal-shell__body">
+      <div class="minimal-shell__status-stack">
         <button
           type="button"
+          class="minimal-power-button"
+          :class="powerClass"
+          :aria-label="powerButtonLabel"
           :disabled="busy"
-          :class="[
-            'minimal-power-button grid h-12 w-12 place-items-center rounded-full transition-transform duration-150 disabled:cursor-not-allowed disabled:opacity-80',
-            powerClass,
-          ]"
           @click="handlePowerClick"
         >
-          <Power class="h-5 w-5" />
+          <Power class="minimal-power-button__icon" />
         </button>
-        <p class="mt-1.5 text-center text-[11px] font-medium leading-4 text-muted">{{ statusText }}</p>
+        <p class="minimal-shell__status-text">{{ statusText }}</p>
       </div>
 
-      <label class="absolute left-[calc(50%+2.45rem)] top-1/2 flex -translate-y-1/2 items-center gap-1.5 text-[11px] text-muted">
-        <span>极简</span>
-        <ToggleSwitch
-          :model-value="false"
-          @update:model-value="switchToAdvancedMode"
-        />
-      </label>
-    </div>
-
-    <div
-      v-else
-      class="flex min-h-0 w-full items-center gap-2"
-    >
-      <div class="flex shrink-0 flex-col items-center">
-        <button
-          type="button"
-          :disabled="busy"
-          :class="[
-            'minimal-power-button grid h-12 w-12 place-items-center rounded-full transition-transform duration-150 disabled:cursor-not-allowed disabled:opacity-80',
-            powerClass,
-          ]"
-          @click="handlePowerClick"
-        >
-          <Power class="h-5 w-5" />
-        </button>
-        <p class="mt-1.5 max-w-[4rem] truncate text-center text-[11px] font-medium leading-4 text-muted">{{ statusText }}</p>
+      <div v-if="connectedLayout" class="minimal-shell__connected">
+        <p class="minimal-shell__connected-name">{{ usernameText }}</p>
+        <p class="minimal-shell__connected-meta">
+          {{ internalIpText }} · {{ uptimeFormatted }} · {{ sessionModeLabel }}
+        </p>
       </div>
 
-      <div class="min-w-0 flex-1 space-y-1.5">
-        <div class="flex items-center gap-1.5">
+      <form v-else class="minimal-shell__form" @submit.prevent="handlePowerClick">
+        <div class="minimal-shell__field-row">
           <input
             v-model="username"
             type="text"
             autocomplete="username"
             placeholder="用户名"
-            class="h-8 min-w-0 flex-1 rounded-md border border-border bg-surface px-2 text-xs text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
+            class="minimal-shell__input"
           />
-          <label class="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-1.5 text-[11px] text-muted">
-            <span>极简</span>
-            <ToggleSwitch
-              :model-value="false"
-              @update:model-value="switchToAdvancedMode"
-            />
-          </label>
-        </div>
-        <div class="flex items-center gap-1.5">
-          <PasswordField
-            v-model="password"
-            autocomplete="current-password"
-            placeholder="密码"
-            wrapper-class="min-w-0 flex-1"
-            input-class="h-8 w-full rounded-md border border-border bg-surface px-2 pr-9 text-xs text-foreground placeholder:text-muted/50 focus:border-accent focus:outline-none"
-            reveal-button-class="right-1 h-6 w-6"
-            :show-saved-password-overwrite-hint="hasStoredPassword && rememberPassword"
-            @keyup-enter="handlePowerClick"
-          />
-          <label class="flex h-8 shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-1.5 text-[11px] text-muted">
-            <input
-              v-model="rememberPassword"
-              type="checkbox"
-              class="h-3 w-3 accent-accent"
-            />
-            记住
-          </label>
           <label
             v-if="showServiceChoice"
-            class="flex h-8 shrink-0 items-center gap-1 rounded-md border border-border bg-surface px-1.5 text-[11px] text-muted"
+            class="minimal-shell__utility minimal-shell__utility--service"
           >
             <input
               v-model="installServiceBeforeConnect"
               type="checkbox"
-              class="h-3 w-3 accent-accent"
+              class="minimal-shell__checkbox"
             />
             服务
           </label>
         </div>
-      </div>
+
+        <div class="minimal-shell__field-row">
+          <PasswordField
+            v-model="password"
+            autocomplete="current-password"
+            placeholder="密码"
+            wrapper-class="minimal-shell__password"
+            input-class="minimal-shell__input"
+            reveal-button-class="minimal-shell__password-reveal"
+            :show-saved-password-overwrite-hint="hasStoredPassword && rememberPassword"
+            @keyup-enter="handlePowerClick"
+          />
+          <label class="minimal-shell__utility minimal-shell__utility--remember">
+            <input
+              v-model="rememberPassword"
+              type="checkbox"
+              class="minimal-shell__checkbox"
+            />
+            记住
+          </label>
+        </div>
+      </form>
+    </div>
+
+    <div class="minimal-shell__activity">
+      <span class="minimal-activity-beam" />
     </div>
   </main>
 </template>
 
 <style scoped>
-.minimal-power-button {
-  position: relative;
-  transform: translateY(-0.08rem);
-  box-shadow:
-    0 1.05rem 1.9rem rgba(0, 0, 0, 0.36),
-    0 0.35rem 0.7rem rgba(0, 0, 0, 0.26),
-    inset 0 0.36rem 0.55rem rgba(255, 255, 255, 0.2),
-    inset 0 -0.56rem 0.9rem rgba(0, 0, 0, 0.22);
+.minimal-shell {
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) auto;
+  height: 100%;
+  min-height: 0;
+  padding: 0.42rem 0.62rem 0.16rem;
+  overflow: hidden;
+  background: var(--color-bg);
+  color: var(--color-foreground);
 }
 
-.minimal-power-button::before {
-  content: '';
-  pointer-events: none;
-  position: absolute;
-  inset: 0.26rem;
+.minimal-shell__body {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 4.15rem minmax(0, 1fr);
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.minimal-shell__status-stack {
+  display: grid;
+  justify-items: center;
+  gap: 0.32rem;
+}
+
+.minimal-power-button {
+  position: relative;
+  display: grid;
+  width: 2.72rem;
+  height: 2.72rem;
+  place-items: center;
   border-radius: 9999px;
-  background: linear-gradient(145deg, rgba(255, 255, 255, 0.22), transparent);
+  color: white;
+  transition: transform 150ms ease, filter 150ms ease;
+  box-shadow:
+    0 0.76rem 1.35rem rgba(0, 0, 0, 0.34),
+    inset 0 0.32rem 0.5rem rgba(255, 255, 255, 0.2),
+    inset 0 -0.48rem 0.76rem rgba(0, 0, 0, 0.24);
+}
+
+.minimal-power-button.is-warning {
+  background: var(--color-warning);
+}
+
+.minimal-power-button.is-connected {
+  background: var(--color-accent);
+}
+
+.minimal-power-button.is-disconnected {
+  background: var(--color-destructive);
 }
 
 .minimal-power-button:hover:not(:disabled) {
-  transform: translateY(-0.16rem);
-  box-shadow:
-    0 1.18rem 2.1rem rgba(0, 0, 0, 0.4),
-    0 0.42rem 0.8rem rgba(0, 0, 0, 0.28),
-    inset 0 0.4rem 0.58rem rgba(255, 255, 255, 0.22),
-    inset 0 -0.6rem 0.94rem rgba(0, 0, 0, 0.25);
+  transform: translateY(-0.08rem);
 }
 
-.minimal-power-button:active:not(:disabled) {
-  transform: translateY(0.06rem) scale(0.985);
-  box-shadow:
-    0 0.55rem 1.1rem rgba(0, 0, 0, 0.3),
-    inset 0 0.2rem 0.35rem rgba(255, 255, 255, 0.16),
-    inset 0 -0.36rem 0.62rem rgba(0, 0, 0, 0.3);
+.minimal-power-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.78;
+}
+
+.minimal-power-button__icon {
+  width: 1.05rem;
+  height: 1.05rem;
+}
+
+.minimal-shell__status-text {
+  max-width: 3.7rem;
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 0.68rem;
+  font-weight: 500;
+  line-height: 0.75rem;
+}
+
+.minimal-shell__connected {
+  min-width: 0;
+}
+
+.minimal-shell__connected-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 0.78rem;
+  font-weight: 600;
+}
+
+.minimal-shell__connected-meta {
+  margin-top: 0.18rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--color-muted);
+  font-size: 0.66rem;
+}
+
+.minimal-shell__form {
+  min-width: 0;
+}
+
+.minimal-shell__field-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 0.38rem;
+}
+
+.minimal-shell__field-row + .minimal-shell__field-row {
+  margin-top: 0.2rem;
+}
+
+:deep(.minimal-shell__input) {
+  height: 1.56rem;
+  min-width: 0;
+  width: 100%;
+  border: 1px solid var(--color-border);
+  border-radius: 0.42rem;
+  background: var(--color-surface);
+  padding: 0 0.46rem;
+  color: var(--color-foreground);
+  font-size: 0.72rem;
+  outline: none;
+}
+
+:deep(.minimal-shell__input:focus) {
+  border-color: var(--color-accent);
+}
+
+.minimal-shell__password {
+  min-width: 0;
+  flex: 1 1 auto;
+}
+
+:deep(.minimal-shell__password-reveal) {
+  right: 0.12rem;
+  height: 1.32rem;
+  width: 1.32rem;
+}
+
+.minimal-shell__utility {
+  display: inline-flex;
+  height: 1.56rem;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 0.2rem;
+  border: 1px solid var(--color-border);
+  border-radius: 0.42rem;
+  background: var(--color-surface);
+  padding: 0 0.36rem;
+  color: var(--color-muted);
+  font-size: 0.66rem;
+  white-space: nowrap;
+}
+
+.minimal-shell__checkbox {
+  width: 0.72rem;
+  height: 0.72rem;
+  accent-color: var(--color-accent);
+}
+
+.minimal-shell__activity {
+  position: relative;
+  height: 0.1rem;
+  overflow: hidden;
+}
+
+.minimal-activity-beam {
+  display: block;
+  width: 100%;
+  height: 100%;
+  background: linear-gradient(90deg, transparent 0%, rgb(var(--color-accent-rgb) / 0.82) 50%, transparent 100%);
+  filter: blur(0.5px);
+  opacity: 0.55;
+}
+
+.minimal-shell.is-connecting .minimal-activity-beam,
+.minimal-shell.is-disconnecting .minimal-activity-beam {
+  animation: minimal-activity-flow 2.4s ease-in-out infinite;
+}
+
+.minimal-shell.is-connected .minimal-activity-beam {
+  animation: minimal-activity-drift 8.5s ease-in-out infinite;
+}
+
+@keyframes minimal-activity-flow {
+  0% {
+    transform: translateX(-18%);
+    opacity: 0.28;
+  }
+  50% {
+    transform: translateX(0);
+    opacity: 0.82;
+  }
+  100% {
+    transform: translateX(18%);
+    opacity: 0.28;
+  }
+}
+
+@keyframes minimal-activity-drift {
+  0%,
+  100% {
+    opacity: 0.34;
+  }
+  50% {
+    opacity: 0.72;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .minimal-activity-beam {
+    animation: none !important;
+  }
 }
 </style>

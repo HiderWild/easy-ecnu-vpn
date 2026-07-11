@@ -12,6 +12,7 @@ struct ConfigView {
   int mtu = 1290;
   std::string useragent;
   bool disable_dtls = false;
+  std::string dtls_mode = "auto";
   std::vector<std::string> extra_args;
   std::string log_file;
   std::string vpn_engine = "native";

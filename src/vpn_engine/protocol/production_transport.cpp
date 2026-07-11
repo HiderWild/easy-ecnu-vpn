@@ -2,6 +2,8 @@
 
 #include "vpn_engine/protocol/aggregate_auth.hpp"
 #include "vpn_engine/protocol/cstp.hpp"
+#include "vpn_engine/protocol/dtls_offer.hpp"
+#include "vpn_engine/protocol/dtls_policy.hpp"
 #include "vpn_engine/protocol/dtls_transport.hpp"
 #include "vpn_engine/protocol/http.hpp"
 
@@ -183,6 +185,18 @@ std::vector<std::uint8_t> to_bytes(const std::string &text) {
   return std::vector<std::uint8_t>(text.begin(), text.end());
 }
 
+DtlsMode effective_dtls_mode(const ProtocolSessionOptions &options) {
+  if (options.disable_dtls)
+    return DtlsMode::Disabled;
+  if (options.dtls_mode == DtlsMode::Enabled)
+    return DtlsMode::Enabled;
+  return DtlsMode::Auto;
+}
+
+std::string dtls_network_key(const ParsedVpnUrl &server) {
+  return server.host + ":" + std::to_string(server.port);
+}
+
 std::string make_aggregate_auth_post_request(const ParsedVpnUrl &server,
                                              const std::string &useragent,
                                              const std::string &body) {
@@ -205,7 +219,8 @@ std::string make_cstp_connect_request(const ParsedVpnUrl &server,
                                       const std::string &useragent,
                                       const std::string &client_hostname,
                                       const std::string &cookie_header,
-                                      int requested_mtu) {
+                                      int requested_mtu,
+                                      const DtlsOfferInput &dtls_offer) {
   if (requested_mtu < 576 || requested_mtu > 1500)
     requested_mtu = 1290;
 
@@ -222,6 +237,7 @@ std::string make_cstp_connect_request(const ParsedVpnUrl &server,
   out << "X-CSTP-Accept-Encoding: identity\r\n";
   out << "X-Transcend-Version: 1\r\n";
   out << "X-Aggregate-Auth: 1\r\n";
+  out << build_dtls_offer_headers(dtls_offer);
   out << "\r\n";
   return out.str();
 }
@@ -230,6 +246,137 @@ bool response_advertises_dtls(const HttpResponse &response) {
   return response.header_ci("X-DTLS-Session-ID") ||
          response.header_ci("X-DTLS12-CipherSuite") ||
          response.header_ci("X-DTLS-CipherSuite");
+}
+
+DtlsChannelOptions dtls_options_from_metadata(
+    const ParsedVpnUrl &server, const TunnelMetadata &metadata,
+    TlsStream *stream,
+    const std::vector<std::uint8_t> &dtls12_exporter_psk) {
+  DtlsChannelOptions options;
+  options.endpoint.host = server.host;
+  options.endpoint.port =
+      metadata.dtls_port > 0 ? metadata.dtls_port : server.port;
+  options.session_id = metadata.dtls_session_id;
+  options.cipher_suite = !metadata.dtls12_cipher_suite.empty()
+                             ? metadata.dtls12_cipher_suite
+                             : metadata.dtls_cipher_suite;
+  options.psk = metadata.dtls_master_secret;
+  if (options.psk.empty() && !metadata.dtls12_cipher_suite.empty()) {
+    if (!dtls12_exporter_psk.empty()) {
+      options.psk = dtls12_exporter_psk;
+    } else {
+      std::vector<std::uint8_t> exported;
+      ValidationResult exporter =
+          derive_dtls12_psk_from_tls_exporter(stream, &exported);
+      if (exporter.ok)
+        options.psk = std::move(exported);
+    }
+  }
+  options.mtu = metadata.dtls_mtu > 0 ? metadata.dtls_mtu : metadata.mtu;
+  return options;
+}
+
+class CstpTlsSelectionDataChannel final : public DataChannel {
+public:
+  const char *name() const override { return "cstp_tls"; }
+  ValidationResult connect() override { return {}; }
+
+  ValidationResult
+  send_packet(const std::vector<std::uint8_t> & /*packet*/) override {
+    return invalid(
+        "cstp_data_channel_external_send",
+        "CSTP/TLS packet sending is owned by ProductionProtocolTransport");
+  }
+
+  ValidationResult
+  receive_packet(std::vector<std::uint8_t> * /*packet*/) override {
+    return invalid(
+        "cstp_data_channel_external_receive",
+        "CSTP/TLS packet receiving is owned by ProductionProtocolTransport");
+  }
+
+  void close() override {}
+};
+
+class DtlsSelectionDataChannel final : public DataChannel {
+public:
+  DtlsSelectionDataChannel(std::unique_ptr<DtlsChannel> channel,
+                           DtlsChannelOptions options)
+      : channel_(std::move(channel)), options_(std::move(options)) {}
+
+  ~DtlsSelectionDataChannel() override { close(); }
+
+  const char *name() const override { return "dtls"; }
+
+  ValidationResult connect() override {
+    if (!channel_) {
+      return invalid("dtls_backend_unavailable",
+                     "native DTLS backend is unavailable");
+    }
+    return channel_->connect(options_);
+  }
+
+  ValidationResult
+  send_packet(const std::vector<std::uint8_t> &packet) override {
+    if (!channel_) {
+      return invalid("dtls_backend_unavailable",
+                     "native DTLS backend is unavailable");
+    }
+    return channel_->send_packet(packet);
+  }
+
+  ValidationResult receive_packet(std::vector<std::uint8_t> *packet) override {
+    if (!channel_) {
+      return invalid("dtls_backend_unavailable",
+                     "native DTLS backend is unavailable");
+    }
+    return channel_->receive_packet(packet);
+  }
+
+  void close() override {
+    if (channel_ && !closed_) {
+      channel_->close();
+      closed_ = true;
+    }
+  }
+
+private:
+  std::unique_ptr<DtlsChannel> channel_;
+  DtlsChannelOptions options_;
+  bool closed_ = false;
+};
+
+void assign_inbound_frame(const CstpFrame &inbound, InboundFrame *out) {
+  switch (inbound.type) {
+  case CstpFrameType::data:
+    out->kind = InboundFrameKind::data;
+    break;
+  case CstpFrameType::keepalive:
+    out->kind = InboundFrameKind::keepalive;
+    break;
+  case CstpFrameType::dpd_request:
+    out->kind = InboundFrameKind::dpd_request;
+    break;
+  case CstpFrameType::dpd_response:
+    out->kind = InboundFrameKind::dpd_response;
+    break;
+  case CstpFrameType::disconnect:
+    out->kind = InboundFrameKind::disconnect;
+    break;
+  case CstpFrameType::compressed:
+    out->kind = InboundFrameKind::compressed;
+    break;
+  case CstpFrameType::terminate:
+    out->kind = InboundFrameKind::terminate;
+    break;
+  }
+  out->payload = inbound.payload;
+}
+
+bool tls_read_has_no_cstp_frame(const ValidationResult &result) {
+  return result.code == "tls_read_timeout" ||
+         result.code == "tls_read_would_block" ||
+         result.code == "transport_timeout";
 }
 
 const AggregateAuthField *field_named(const AggregateAuthResponse &response,
@@ -619,12 +766,29 @@ std::string body_diagnostics_summary(const HttpResponse &response) {
 // Begin inlined from vpn_engine/protocol/production_transport_auth include-unit
 ProductionProtocolTransport::ProductionProtocolTransport(
     TlsStream *stream, std::string client_hostname)
-    : stream_(stream), client_hostname_(std::move(client_hostname)) {}
+    : stream_(stream), client_hostname_(std::move(client_hostname)),
+      dtls_backend_available_(false) {}
+
+ProductionProtocolTransport::ProductionProtocolTransport(
+    TlsStream *stream, DtlsChannelFactory dtls_channel_factory,
+    std::string client_hostname)
+    : stream_(stream), dtls_channel_factory_(std::move(dtls_channel_factory)),
+      client_hostname_(std::move(client_hostname)),
+      dtls_backend_available_(static_cast<bool>(dtls_channel_factory_)) {}
 
 ProductionProtocolTransport::ProductionProtocolTransport(
     std::unique_ptr<TlsStream> stream, std::string client_hostname)
     : owned_stream_(std::move(stream)), stream_(owned_stream_.get()),
-      client_hostname_(std::move(client_hostname)) {}
+      client_hostname_(std::move(client_hostname)),
+      dtls_backend_available_(false) {}
+
+ProductionProtocolTransport::ProductionProtocolTransport(
+    std::unique_ptr<TlsStream> stream, DtlsChannelFactory dtls_channel_factory,
+    std::string client_hostname)
+    : owned_stream_(std::move(stream)), stream_(owned_stream_.get()),
+      dtls_channel_factory_(std::move(dtls_channel_factory)),
+      client_hostname_(std::move(client_hostname)),
+      dtls_backend_available_(static_cast<bool>(dtls_channel_factory_)) {}
 
 AuthResult ProductionProtocolTransport::authenticate(
     const ProtocolSessionOptions &options) {
@@ -633,11 +797,17 @@ AuthResult ProductionProtocolTransport::authenticate(
   requested_mtu_ = options.mtu_fallback;
   current_password_ = options.password;
   current_password_form_encoded_ = form_url_encode(options.password);
-  dtls_disabled_ = options.disable_dtls;
+  dtls_mode_ = effective_dtls_mode(options);
+  dtls_disabled_ = dtls_mode_ == DtlsMode::Disabled;
   auth_cookie_.clear();
   cookies_.clear();
   read_buffer_.clear();
   cstp_connected_ = false;
+  dtls_data_channel_active_ = false;
+  if (dtls_data_channel_) {
+    dtls_data_channel_->close();
+    dtls_data_channel_.reset();
+  }
 
   if (!stream_) {
     return auth_error("transport_missing", "TLS stream is not configured");
@@ -970,8 +1140,24 @@ ProductionProtocolTransport::connect_cstp(const std::string &cookie,
   if (effective_cookie.empty())
     return invalid("auth_cookie_missing", "CSTP connect requires auth cookie");
 
-  ValidationResult written = stream_->write_all(to_bytes(make_cstp_connect_request(
-      server_, useragent_, client_hostname_, effective_cookie, requested_mtu_)));
+  DtlsOfferInput dtls_offer;
+  std::vector<std::uint8_t> dtls12_exporter_psk;
+  bool dtls12_exporter_ready = false;
+  if (dtls_mode_ != DtlsMode::Disabled && dtls_backend_available_) {
+    ValidationResult exporter =
+        derive_dtls12_psk_from_tls_exporter(stream_, &dtls12_exporter_psk);
+    dtls12_exporter_ready = exporter.ok && !dtls12_exporter_psk.empty();
+  }
+  dtls_offer.mode = dtls_mode_;
+  dtls_offer.backend_available = dtls_backend_available_;
+  dtls_offer.request_headers_allowed = dtls12_exporter_ready;
+  if (dtls12_exporter_ready)
+    dtls_offer.dtls12_cipher_suites = "TLS_PSK_WITH_AES_256_GCM_SHA384";
+
+  ValidationResult written =
+      stream_->write_all(to_bytes(make_cstp_connect_request(
+          server_, useragent_, client_hostname_, effective_cookie,
+          requested_mtu_, dtls_offer)));
   if (!written.ok) {
     return sanitized_result(written, current_password_,
                             current_password_form_encoded_, auth_cookie_,
@@ -998,15 +1184,73 @@ ProductionProtocolTransport::connect_cstp(const std::string &cookie,
                             effective_cookie);
   }
 
+  {
+    const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+    dtls_data_channel_active_ = false;
+    dtls_data_channel_.reset();
+  }
+
+  const DtlsMode policy_mode = dtls_mode_;
+  const bool gateway_advertised_dtls = response_advertises_dtls(response);
+  const DtlsCooldown cooldown =
+      dtls_failures_.cooldown_for(dtls_network_key(server_));
+  DtlsPolicyInput policy_input;
+  policy_input.mode = policy_mode;
+  policy_input.gateway_advertised = gateway_advertised_dtls;
+  policy_input.backend_available = dtls_backend_available_;
+  policy_input.cooldown_active = cooldown.active;
+
+  const DtlsDecision decision = decide_dtls(policy_input);
+  CstpTlsSelectionDataChannel cstp_channel;
+  std::unique_ptr<DataChannel> dtls_candidate;
+  if (decision.should_attempt) {
+    std::unique_ptr<DtlsChannel> dtls_channel;
+    if (dtls_channel_factory_)
+      dtls_channel = dtls_channel_factory_(*metadata);
+    dtls_candidate.reset(new DtlsSelectionDataChannel(
+        std::move(dtls_channel),
+        dtls_options_from_metadata(server_, *metadata, stream_,
+                                   dtls12_exporter_psk)));
+  } else {
+    dtls_candidate.reset(
+        new DtlsSelectionDataChannel(nullptr, DtlsChannelOptions{}));
+  }
+
+  DataChannelSelector selector;
+  DataChannelSelection selected =
+      selector.select(cstp_channel, *dtls_candidate, decision);
+  const bool dtls_connected = selected.channel == dtls_candidate.get() &&
+                              selected.active_channel == "dtls";
+  std::shared_ptr<DataChannel> selected_dtls_channel;
+  if (dtls_connected) {
+    selected_dtls_channel =
+        std::shared_ptr<DataChannel>(std::move(dtls_candidate));
+  } else if (decision.should_attempt) {
+    dtls_failures_.record_failure(dtls_network_key(server_),
+                                  selected.fallback_reason);
+  }
+  {
+    const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+    dtls_data_channel_active_ = dtls_connected;
+    dtls_data_channel_ = std::move(selected_dtls_channel);
+  }
+
   DtlsNegotiationInput dtls;
-  dtls.disabled_by_config = dtls_disabled_;
-  dtls.gateway_advertised = response_advertises_dtls(response);
-  dtls.backend_available = false;
-  dtls.handshake_succeeded = false;
+  dtls.disabled_by_config = policy_mode == DtlsMode::Disabled;
+  dtls.gateway_advertised = gateway_advertised_dtls;
+  dtls.backend_available = dtls_backend_available_;
+  dtls.attempted = decision.should_attempt;
+  dtls.handshake_succeeded = dtls_connected;
   dtls.tls_fallback_allowed = true;
+  dtls.failure_reason = selected.fallback_reason;
   DtlsNegotiationStatus dtls_status = classify_dtls_negotiation(dtls);
+  metadata->dtls_mode = dtls_mode_to_string(policy_mode);
+  metadata->active_data_channel = dtls_connected ? "dtls" : "cstp_tls";
   metadata->dtls_state = dtls_transport_state_to_string(dtls_status.state);
-  metadata->dtls_fallback_reason = dtls_status.reason;
+  metadata->dtls_fallback_reason = selected.fallback_reason;
+  metadata->dtls_fallback_count = decision.should_attempt && !dtls_connected
+                                      ? 1
+                                      : 0;
 
   cstp_connected_ = true;
   return {};
@@ -1028,6 +1272,16 @@ ValidationResult ProductionProtocolTransport::write_frame_locked(
 
 ValidationResult ProductionProtocolTransport::send_packet(
     const std::vector<std::uint8_t> &packet) {
+  std::shared_ptr<DataChannel> dtls_channel;
+  {
+    const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+    if (dtls_data_channel_active_)
+      dtls_channel = dtls_data_channel_;
+  }
+  if (dtls_channel) {
+    return dtls_channel->send_packet(packet);
+  }
+
   CstpFrame outbound;
   outbound.type = CstpFrameType::data;
   outbound.payload = packet;
@@ -1083,6 +1337,53 @@ ProductionProtocolTransport::receive_frame(InboundFrame *out) {
   if (!stream_ || !stream_connected_ || !cstp_connected_)
     return invalid("transport_closed", "CSTP transport is not connected");
 
+  std::shared_ptr<DataChannel> dtls_channel;
+  {
+    const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+    if (dtls_data_channel_active_)
+      dtls_channel = dtls_data_channel_;
+  }
+
+  if (dtls_channel) {
+    while (true) {
+      if (read_buffer_.empty()) {
+        ValidationResult read = read_more();
+        if (!read.ok) {
+          if (tls_read_has_no_cstp_frame(read))
+            break;
+          return read;
+        }
+      }
+
+      ByteReader reader(read_buffer_);
+      CstpFrame inbound;
+      ValidationResult decoded = decode_cstp_frame(&reader, &inbound);
+      if (decoded.ok) {
+        read_buffer_.erase(read_buffer_.begin(),
+                           read_buffer_.begin() +
+                               static_cast<std::ptrdiff_t>(reader.position()));
+        assign_inbound_frame(inbound, out);
+        return {};
+      }
+      if (decoded.code != "cstp_frame_incomplete") {
+        return sanitized_result(decoded, current_password_,
+                                current_password_form_encoded_, auth_cookie_);
+      }
+      ValidationResult read = read_more();
+      if (!read.ok) {
+        if (tls_read_has_no_cstp_frame(read))
+          break;
+        return read;
+      }
+    }
+
+    ValidationResult received = dtls_channel->receive_packet(&out->payload);
+    if (!received.ok)
+      return received;
+    out->kind = InboundFrameKind::data;
+    return {};
+  }
+
   while (true) {
     ByteReader reader(read_buffer_);
     CstpFrame inbound;
@@ -1092,30 +1393,7 @@ ProductionProtocolTransport::receive_frame(InboundFrame *out) {
                          read_buffer_.begin() +
                              static_cast<std::ptrdiff_t>(reader.position()));
 
-      switch (inbound.type) {
-      case CstpFrameType::data:
-        out->kind = InboundFrameKind::data;
-        break;
-      case CstpFrameType::keepalive:
-        out->kind = InboundFrameKind::keepalive;
-        break;
-      case CstpFrameType::dpd_request:
-        out->kind = InboundFrameKind::dpd_request;
-        break;
-      case CstpFrameType::dpd_response:
-        out->kind = InboundFrameKind::dpd_response;
-        break;
-      case CstpFrameType::disconnect:
-        out->kind = InboundFrameKind::disconnect;
-        break;
-      case CstpFrameType::compressed:
-        out->kind = InboundFrameKind::compressed;
-        break;
-      case CstpFrameType::terminate:
-        out->kind = InboundFrameKind::terminate;
-        break;
-      }
-      out->payload = std::move(inbound.payload);
+      assign_inbound_frame(inbound, out);
       return {};
     }
 
@@ -1128,6 +1406,20 @@ ProductionProtocolTransport::receive_frame(InboundFrame *out) {
     if (!read.ok)
       return read;
   }
+}
+
+bool ProductionProtocolTransport::can_fallback_to_cstp() const {
+  const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+  return dtls_data_channel_active_ && dtls_data_channel_;
+}
+
+void ProductionProtocolTransport::fallback_to_cstp(const std::string &reason,
+                                                   const std::string &code) {
+  dtls_failures_.record_failure(dtls_network_key(server_),
+                                code.empty() ? reason : code);
+  const std::lock_guard<std::mutex> lock(data_channel_mutex_);
+  dtls_data_channel_active_ = false;
+  dtls_data_channel_.reset();
 }
 
 void ProductionProtocolTransport::disconnect() {
@@ -1143,6 +1435,12 @@ void ProductionProtocolTransport::disconnect() {
     stream_->close();
   }
 
+  {
+    const std::lock_guard<std::mutex> data_lock(data_channel_mutex_);
+    dtls_data_channel_active_ = false;
+    dtls_data_channel_.reset();
+  }
+
   stream_connected_ = false;
   cstp_connected_ = false;
   read_buffer_.clear();
@@ -1150,6 +1448,7 @@ void ProductionProtocolTransport::disconnect() {
   auth_cookie_.clear();
   current_password_.clear();
   current_password_form_encoded_.clear();
+  dtls_failures_ = DtlsFailureHistory{};
 }
 // End inlined from vpn_engine/protocol/production_transport_cstp include-unit
 // Begin inlined from vpn_engine/protocol/production_transport_read_http include-unit
@@ -1157,6 +1456,12 @@ void ProductionProtocolTransport::reset_for_reconnect() {
   const std::lock_guard<std::mutex> lock(write_mutex_);
   if (stream_ && stream_connected_)
     stream_->close();
+
+  {
+    const std::lock_guard<std::mutex> data_lock(data_channel_mutex_);
+    dtls_data_channel_active_ = false;
+    dtls_data_channel_.reset();
+  }
 
   stream_connected_ = false;
   cstp_connected_ = false;

@@ -1,8 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
-import DashboardActionBar from '../components/dashboard/DashboardActionBar.vue'
 import DashboardConnectionHero from '../components/dashboard/DashboardConnectionHero.vue'
-import DashboardStatusRail from '../components/dashboard/DashboardStatusRail.vue'
 import DashboardVisualStage from '../components/dashboard/DashboardVisualStage.vue'
 import { useConfigStore } from '../stores/config'
 import { useVpnStore } from '../stores/vpn'
@@ -14,15 +12,30 @@ const config = useConfigStore()
 
 const installServiceBeforeConnect = ref(true)
 
-function switchToMinimalMode() {
-  void config.saveSettings({ minimal_mode: true })
-}
+const minimizeToTrayOnConnect = computed({
+  get: () => config.settings.minimize_to_tray_on_connect,
+  set: (value: boolean) => {
+    void config.saveSettings({ minimize_to_tray_on_connect: value })
+  },
+})
+
+const autoReconnect = computed({
+  get: () => config.settings.auto_reconnect,
+  set: (value: boolean) => {
+    void config.saveSettings({ auto_reconnect: value })
+  },
+})
+
+const retryLimit = computed({
+  get: () => config.settings.retry_limit,
+  set: (value: number) => {
+    void config.saveSettings({ retry_limit: Math.max(0, Math.trunc(value || 0)) })
+  },
+})
 
 const connected = computed(() => Boolean(vpn.status?.connected))
 const connecting = computed(() => vpn.connectInFlight)
 const disconnecting = computed(() => vpn.disconnectInFlight)
-const upstreamAdapters = computed(() => vpn.status?.upstream_virtual_adapters || [])
-const hasUpstreamVirtual = computed(() => Boolean(vpn.status?.upstream_virtual_detected || upstreamAdapters.value.length > 0))
 const showInstallServiceChoice = computed(() => (
   !connected.value &&
   !connecting.value &&
@@ -33,6 +46,7 @@ const showInstallServiceChoice = computed(() => (
   !vpn.serviceInstalled
 ))
 const installServiceChoiceDisabled = computed(() => connecting.value || disconnecting.value || vpn.loading || vpn.serviceBusy)
+const showMinimizeToTrayChoice = computed(() => !connected.value && !connecting.value && !disconnecting.value)
 const showServiceRepairAction = computed(() => (
   !connected.value &&
   !connecting.value &&
@@ -80,32 +94,16 @@ const powerButtonClass = computed(() => {
 })
 const powerButtonDisabled = computed(() => !connecting.value && (vpn.loading || vpn.serviceBusy))
 
-const vpnPathActive = computed(() => connected.value && Boolean(vpn.status?.network_ready))
-
-const upstreamVirtualNames = computed(() => {
-  return upstreamAdapters.value.map((adapter) => adapter.name).filter(Boolean).join('、')
-})
-
-const upstreamVirtualCaption = computed(() => {
-  return upstreamVirtualNames.value || vpn.status?.upstream_virtual_message || '已检测到'
-})
-
-const networkProbeSummary = computed(() => {
-  if (!vpn.status) return '正在探测本机出口'
-  if (hasUpstreamVirtual.value) return `已发现代理 TUN：${upstreamVirtualCaption.value}`
-  return '未发现代理 TUN，当前使用系统默认出口'
-})
-
 const routePolicyDescription = computed(() => {
-  if (!vpn.status) return '启动后会显示 EXV 与系统出口的相对位置。'
+  if (!vpn.status) return '正在应用校园网路由和虚拟网卡配置。'
   if (vpn.status.route_policy === 'exv-before-proxy-tun') {
     return connected.value
       ? '校园内网流量已写入 EXV 虚拟网卡；默认出口和代理 TUN 保持在 EXV 后方。'
-      : '连接时校园内网路由会写入 EXV 虚拟网卡；默认出口和代理 TUN 保持在 EXV 后方。'
+      : '正在应用校园网路由和虚拟网卡配置。'
   }
   return connected.value
     ? '校园内网流量已写入 EXV 虚拟网卡，其他流量继续按系统默认出口处理。'
-    : '连接时校园内网流量会进入 EXV 虚拟网卡，其他流量继续按系统默认出口处理。'
+    : '正在应用校园网路由和虚拟网卡配置。'
 })
 
 const visualStageTone = computed(() => {
@@ -121,7 +119,7 @@ const visualStageHeadline = computed(() => {
   if (connecting.value) return vpn.connectionProgress.label || '正在建立连接'
   if (connected.value) return vpn.status?.network_ready ? '校园网通道运行中' : '等待网络就绪'
   if (vpn.lastError) return '上次连接需要处理'
-  return '准备建立校园网连接'
+  return ''
 })
 
 const visualStageDetail = computed(() => {
@@ -129,10 +127,24 @@ const visualStageDetail = computed(() => {
   if (connecting.value) return vpn.connectionProgress.description || routePolicyDescription.value
   if (connected.value) return routePolicyDescription.value
   if (vpn.lastError) return '查看弹窗提示后处理异常，再重新连接。'
-  return `${networkProbeSummary.value}。${routePolicyDescription.value}`
+  return ''
 })
 
+const visualStageSteps = computed(() => connecting.value ? vpn.connectionProgressSteps : [])
+const visualStageCurrentKey = computed(() => connecting.value ? vpn.connectionProgress.key : '')
+const showPreConnectInfo = computed(() => !connected.value && !connecting.value && !disconnecting.value)
+
+const coreStatusLabel = computed(() => {
+  if (vpn.status) return '正常'
+  if (vpn.lastErrorType === 'native_failure' || vpn.lastErrorType === 'parse_failure') return '断连'
+  return '断连'
+})
+
+const coreStatusTone = computed(() => (vpn.status ? 'accent' as const : 'warning' as const))
+const proxyTunLabel = computed(() => vpn.upstreamVirtualDetected ? vpn.upstreamVirtualLabel : '--')
+
 function handlePowerClick() {
+  if (vpn.dashboardConnectGuardHeld) return
   if (connecting.value) {
     void vpn.cancelConnect()
     return
@@ -145,14 +157,6 @@ function handleServiceRepairClick() {
   if (vpn.serviceBusy || vpn.loading) return
   void vpn.repairService()
 }
-
-const uptimeFormatted = computed(() => {
-  const total = vpn.displayUptimeSeconds
-  const h = Math.floor(total / 3600)
-  const m = Math.floor((total % 3600) / 60)
-  const s = total % 60
-  return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`
-})
 
 const serviceState = computed(() => {
   if (vpn.serviceBusy) return { label: '处理中', tone: 'warning' as const }
@@ -169,18 +173,6 @@ const connectionState = computed(() => {
   return { label: '已连接', tone: 'accent' as const }
 })
 
-const statusRailItems = computed(() => [
-  { label: '用户', value: vpn.status?.username || '--' },
-  { label: '运行时长', value: connected.value ? uptimeFormatted.value : '--' },
-  {
-    label: '内网地址',
-    value: vpn.status?.internal_ip || '--',
-    tone: vpnPathActive.value ? 'accent' as const : 'muted' as const,
-  },
-  { label: 'VPN 服务器', value: vpn.status?.server || '未配置' },
-  { label: '代理 TUN', value: hasUpstreamVirtual.value ? upstreamVirtualCaption.value : '--' },
-  { label: '服务', value: serviceState.value.label, tone: serviceState.value.tone },
-])
 </script>
 
 <template>
@@ -207,25 +199,25 @@ const statusRailItems = computed(() => [
       :detail="visualStageDetail"
       :tone="visualStageTone"
       :active="visualStageActive"
-    />
-
-    <DashboardStatusRail
-      class="dashboard-page-grid__rail"
-      :items="statusRailItems"
-      :connection-state-label="connectionState.label"
-      :connection-state-tone="connectionState.tone"
-    />
-
-    <DashboardActionBar
-      class="dashboard-page-grid__actions"
+      :steps="visualStageSteps"
+      :current-key="visualStageCurrentKey"
       v-model:install-service-before-connect="installServiceBeforeConnect"
+      v-model:minimize-to-tray-on-connect="minimizeToTrayOnConnect"
+      v-model:auto-reconnect="autoReconnect"
+      v-model:retry-limit="retryLimit"
+      :show-pre-connect-info="showPreConnectInfo"
       :show-service-repair-action="showServiceRepairAction"
       :service-repair-disabled="vpn.serviceBusy"
       :service-repair-label="serviceRepairLabel"
       :show-install-service-choice="showInstallServiceChoice"
       :install-service-choice-disabled="installServiceChoiceDisabled"
+      :show-minimize-to-tray-choice="showMinimizeToTrayChoice"
+      :core-status-label="coreStatusLabel"
+      :core-status-tone="coreStatusTone"
+      :service-status-label="serviceState.label"
+      :service-status-tone="serviceState.tone"
+      :proxy-tun-label="proxyTunLabel"
       @repair="handleServiceRepairClick"
-      @switch-to-minimal="switchToMinimalMode"
     />
   </div>
 </template>
@@ -234,8 +226,7 @@ const statusRailItems = computed(() => [
 .dashboard-page-grid {
   display: grid;
   min-height: 0;
-  grid-template-columns: minmax(0, 1fr) 13rem;
-  grid-template-rows: 9.25rem minmax(0, 1fr) 3.25rem;
+  grid-template-rows: 9.25rem minmax(0, 1fr);
   gap: 0.75rem;
   overflow: hidden;
 }
@@ -250,27 +241,14 @@ const statusRailItems = computed(() => [
   grid-row: 2;
 }
 
-.dashboard-page-grid__rail {
-  grid-column: 2;
-  grid-row: 1 / 3;
-}
-
-.dashboard-page-grid__actions {
-  grid-column: 1 / 3;
-  grid-row: 3;
-}
-
 @media (max-width: 860px) {
   .dashboard-page-grid {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: auto minmax(16rem, 1fr) auto auto;
+    grid-template-rows: auto minmax(16rem, 1fr);
     overflow: auto;
   }
 
   .dashboard-page-grid__hero,
-  .dashboard-page-grid__visual,
-  .dashboard-page-grid__rail,
-  .dashboard-page-grid__actions {
+  .dashboard-page-grid__visual {
     grid-column: 1;
   }
 
@@ -280,14 +258,6 @@ const statusRailItems = computed(() => [
 
   .dashboard-page-grid__visual {
     grid-row: 2;
-  }
-
-  .dashboard-page-grid__rail {
-    grid-row: 3;
-  }
-
-  .dashboard-page-grid__actions {
-    grid-row: 4;
   }
 }
 </style>

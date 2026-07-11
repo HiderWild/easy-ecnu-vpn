@@ -70,10 +70,12 @@ build\windows\release\
 
 发布产物：
 
-- `EXV-<version>[-<build-label>]-windows-x64-portable.zip`: portable archive with a single top-level `EXV\` directory.
-- `EXV-<version>[-<build-label>]-windows-x64-setup.exe`: per-user NSIS installer for `%LOCALAPPDATA%\Programs\EXV`.
+- `EXV-<version>-windows-x64-portable.zip`: formal portable archive with a single top-level `EXV\` directory.
+- `EXV-<version>-windows-x64-setup.exe`: formal per-user NSIS installer for `%LOCALAPPDATA%\Programs\EXV`.
+- `EXV-<version>-dev.<n>-windows-x64-portable.zip`: development portable archive.
+- `EXV-<version>-dev.<n>-windows-x64-setup.exe`: development per-user NSIS installer.
 
-`<version>` is the product version from `project(exv VERSION ...)` in `CMakeLists.txt`. Optional build labels such as `local-zh` only affect artifact names; Windows installed-app metadata and the in-app About version keep the product version.
+`<version>` is the three-part product version from `project(exv VERSION ...)` in `CMakeLists.txt`. Development package numbers are created with `scripts\package-windows-release.ps1 -DevBuild`; the script scans existing `dev.<n>` setup files in the output directory and uses the next number. Every development package-relevant change must be recorded in `docs\RELEASE_NOTES_UNRELEASED.md` before packaging.
 
 setup 是面向 `%LOCALAPPDATA%\Programs\EXV` 的 per-user NSIS installer。它不捆绑 Microsoft Edge WebView2 Evergreen Runtime，也不在安装阶段安装 privileged helper；WebView2 Runtime 检测和 helper 安装仍由 app first-run flow 控制。
 

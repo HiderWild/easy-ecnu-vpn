@@ -44,4 +44,9 @@ TunnelControllerTestAccess::configure_network_for_engine(
                                                         device_config);
 }
 
+void TunnelControllerTestAccess::run_core_lease_keepalive(
+    TunnelController &controller) {
+  controller.impl_->do_core_lease_keepalive();
+}
+
 } // namespace exv::core

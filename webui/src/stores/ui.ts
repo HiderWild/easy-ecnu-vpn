@@ -49,6 +49,26 @@ export interface CredentialPromptResult {
 }
 
 export const useUiStore = defineStore('ui', () => {
+  const quickStartDismissedStorageKey = 'exv:quick-start-dismissed'
+
+  function readQuickStartDismissed() {
+    if (typeof localStorage === 'undefined') return false
+    try {
+      return localStorage.getItem(quickStartDismissedStorageKey) === 'true'
+    } catch {
+      return false
+    }
+  }
+
+  function writeQuickStartDismissed(value: boolean) {
+    if (typeof localStorage === 'undefined') return
+    try {
+      localStorage.setItem(quickStartDismissedStorageKey, value ? 'true' : 'false')
+    } catch {
+      // localStorage can be unavailable in restricted WebView contexts.
+    }
+  }
+
   const toasts = ref<ToastMessage[]>([])
   const showConfirm = ref(false)
   const confirmTitle = ref('确认操作')
@@ -75,6 +95,7 @@ export const useUiStore = defineStore('ui', () => {
   const passwordPromptResolver = ref<((value: string | null) => void) | null>(null)
   const showQuickStart = ref(false)
   const quickStartRequest = ref<QuickStartRequest | null>(null)
+  const quickStartDismissed = ref(readQuickStartDismissed())
   const showCredentialPrompt = ref(false)
   const credentialPrompt = ref<CredentialPromptRequest | null>(null)
   const credentialPromptResolver = ref<((value: CredentialPromptResult | null) => void) | null>(null)
@@ -211,6 +232,23 @@ export const useUiStore = defineStore('ui', () => {
     quickStartRequest.value = null
   }
 
+  function dismissQuickStart() {
+    quickStartDismissed.value = true
+    writeQuickStartDismissed(true)
+    closeQuickStart()
+  }
+
+  function completeQuickStart() {
+    quickStartDismissed.value = true
+    writeQuickStartDismissed(true)
+    closeQuickStart()
+  }
+
+  function resetQuickStartDismissal() {
+    quickStartDismissed.value = false
+    writeQuickStartDismissed(false)
+  }
+
   function requestCredentials(request: CredentialPromptRequest) {
     credentialPromptResolver.value?.(null)
     credentialPrompt.value = request
@@ -242,13 +280,14 @@ export const useUiStore = defineStore('ui', () => {
     errorModal,
     showPasswordPrompt, passwordPromptMessage, passwordPromptDescription,
     passwordPromptSubmitLabel, passwordPromptCancelLabel,
-    showQuickStart, quickStartRequest,
+    showQuickStart, quickStartRequest, quickStartDismissed,
     showCredentialPrompt, credentialPrompt,
     addToast, removeToast,
     requestConfirm, closeConfirm, onConfirm,
     requestError, closeError, onErrorPrimary,
     requestPassword, submitPasswordPrompt, closePasswordPrompt,
-    openQuickStart, closeQuickStart,
+    openQuickStart, closeQuickStart, dismissQuickStart, completeQuickStart,
+    resetQuickStartDismissal,
     requestCredentials, submitCredentialPrompt, closeCredentialPrompt,
   }
 })

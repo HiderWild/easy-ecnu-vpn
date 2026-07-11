@@ -3,14 +3,16 @@ const props = withDefaults(defineProps<{
   open: boolean
   title?: string
   description?: string
-  size?: 'sm' | 'md' | 'lg'
+  size?: 'sm' | 'md' | 'lg' | 'xl'
   closeOnScrim?: boolean
+  bodyScroll?: boolean
   compact?: boolean
 }>(), {
   title: '',
   description: '',
   size: 'md',
   closeOnScrim: true,
+  bodyScroll: true,
   compact: false,
 })
 
@@ -40,17 +42,33 @@ function onScrimClick() {
       aria-modal="true"
       :aria-label="title || undefined"
     >
-      <header v-if="title || description || $slots.icon" class="modal-shell__header">
-        <div v-if="$slots.icon" class="modal-shell__icon">
-          <slot name="icon" />
+      <header
+        v-if="title || description || $slots.icon || $slots['header-start'] || $slots['header-end']"
+        class="modal-shell__header"
+      >
+        <div class="modal-shell__header-main">
+          <div v-if="$slots.icon" class="modal-shell__icon">
+            <slot name="icon" />
+          </div>
+          <div class="modal-shell__heading-stack">
+            <div class="modal-shell__heading">
+              <h2 v-if="title" class="modal-shell__title">{{ title }}</h2>
+              <p v-if="description" class="modal-shell__description">{{ description }}</p>
+            </div>
+            <div v-if="$slots['header-start']" class="modal-shell__header-start">
+              <slot name="header-start" />
+            </div>
+          </div>
         </div>
-        <div class="modal-shell__heading">
-          <h2 v-if="title" class="modal-shell__title">{{ title }}</h2>
-          <p v-if="description" class="modal-shell__description">{{ description }}</p>
+        <div v-if="$slots['header-end']" class="modal-shell__header-end">
+          <slot name="header-end" />
         </div>
       </header>
 
-      <div class="modal-shell__body">
+      <div
+        class="modal-shell__body"
+        :class="bodyScroll ? '' : 'modal-shell__body--locked'"
+      >
         <slot />
       </div>
 
@@ -95,6 +113,10 @@ function onScrimClick() {
   width: min(100%, 440px);
 }
 
+.modal-shell__panel--xl {
+  width: min(100%, 920px);
+}
+
 .modal-shell__panel--compact {
   width: min(100%, 294px);
   max-height: calc(100vh - 8px);
@@ -106,8 +128,16 @@ function onScrimClick() {
   display: flex;
   flex: 0 0 auto;
   align-items: flex-start;
+  justify-content: space-between;
   gap: 10px;
   margin-bottom: 14px;
+}
+
+.modal-shell__header-main {
+  display: flex;
+  min-width: 0;
+  align-items: flex-start;
+  gap: 10px;
 }
 
 .modal-shell__icon {
@@ -121,8 +151,23 @@ function onScrimClick() {
   color: var(--color-accent);
 }
 
+.modal-shell__heading-stack {
+  display: grid;
+  min-width: 0;
+  gap: 8px;
+}
+
 .modal-shell__heading {
   min-width: 0;
+}
+
+.modal-shell__header-start,
+.modal-shell__header-end {
+  min-width: 0;
+}
+
+.modal-shell__header-end {
+  flex: 0 0 auto;
 }
 
 .modal-shell__title {
@@ -148,6 +193,11 @@ function onScrimClick() {
   overscroll-behavior: contain;
 }
 
+.modal-shell__body--locked {
+  overflow: hidden;
+  overscroll-behavior: auto;
+}
+
 .modal-shell__actions {
   display: flex;
   flex: 0 0 auto;
@@ -163,10 +213,15 @@ function onScrimClick() {
   margin-bottom: 2px;
 }
 
+.modal-shell__panel--compact .modal-shell__header-main {
+  gap: 6px;
+}
+
 .modal-shell__panel--compact .modal-shell__icon {
   display: none;
 }
 
+.modal-shell__panel--compact .modal-shell__heading-stack,
 .modal-shell__panel--compact .modal-shell__heading {
   min-width: 0;
 }

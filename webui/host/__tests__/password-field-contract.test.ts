@@ -93,6 +93,16 @@ describe('password field contract', () => {
     }
   })
 
+  it('only renders the reveal button when the password field contains real input', () => {
+    const passwordField = readSource('src', 'components', 'PasswordField.vue')
+
+    assert.match(passwordField, /import \{ computed, ref, watch \} from 'vue'/)
+    assert.match(passwordField, /const hasRevealableValue = computed\(\(\) => props\.modelValue\.length > 0\)/)
+    assert.match(passwordField, /v-if="props\.showRevealButton && hasRevealableValue"/)
+    assert.match(passwordField, /watch\(\s*\(\) => props\.modelValue/)
+    assert.match(passwordField, /if \(value\.length === 0\) \{\s*revealed\.value = false/)
+  })
+
   it('removes legacy saved-password copy from password forms', () => {
     for (const file of vueFiles(srcRoot)) {
       const source = readFileSync(file, 'utf8')

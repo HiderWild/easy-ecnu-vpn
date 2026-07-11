@@ -81,6 +81,17 @@ std::string config_set(config::ConfigManager& mgr, const std::string& key,
         }
         if (mtu < 576 || mtu > 1500) return "MTU must be between 576 and 1500";
         cfg.mtu = mtu;
+    } else if (key == "retry_limit") {
+        int retry_limit;
+        try {
+            retry_limit = std::stoi(value);
+        } catch (...) {
+            return "Invalid integer value for retry_limit";
+        }
+        if (retry_limit < 0) {
+            return "retry_limit must be 0 or a positive integer";
+        }
+        cfg.retry_limit = retry_limit;
     } else if (key == "remember_password") {
         if (value == "true" || value == "1") {
             cfg.remember_password = true;
@@ -95,10 +106,19 @@ std::string config_set(config::ConfigManager& mgr, const std::string& key,
     } else if (key == "disable_dtls") {
         if (value == "true" || value == "1") {
             cfg.disable_dtls = true;
+            cfg.dtls_mode = "disabled";
         } else if (value == "false" || value == "0") {
             cfg.disable_dtls = false;
+            cfg.dtls_mode = "auto";
         } else {
             return "Invalid boolean value for disable_dtls";
+        }
+    } else if (key == "dtls_mode") {
+        if (value == "auto" || value == "enabled" || value == "disabled") {
+            cfg.dtls_mode = value;
+            cfg.disable_dtls = value == "disabled";
+        } else {
+            return "dtls_mode must be auto, enabled, or disabled";
         }
     } else if (key == "auto_reconnect") {
         if (value == "true" || value == "1") {
@@ -163,6 +183,22 @@ std::string config_set(config::ConfigManager& mgr, const std::string& key,
             cfg.auto_connect_on_launch = false;
         } else {
             return "Invalid boolean value for auto_connect_on_launch";
+        }
+    } else if (key == "silent_startup") {
+        if (value == "true" || value == "1") {
+            cfg.silent_startup = true;
+        } else if (value == "false" || value == "0") {
+            cfg.silent_startup = false;
+        } else {
+            return "Invalid boolean value for silent_startup";
+        }
+    } else if (key == "connection_state_notifications") {
+        if (value == "true" || value == "1") {
+            cfg.connection_state_notifications = true;
+        } else if (value == "false" || value == "0") {
+            cfg.connection_state_notifications = false;
+        } else {
+            return "Invalid boolean value for connection_state_notifications";
         }
     } else if (key == "vpn_engine") {
         if (value != "native") {
@@ -271,7 +307,18 @@ std::string config_import(config::ConfigManager& mgr, const std::string& json_st
         if (j.contains("username")) cfg.username = j["username"].get<std::string>();
         if (j.contains("mtu")) cfg.mtu = j["mtu"].get<int>();
         if (j.contains("useragent")) cfg.useragent = j["useragent"].get<std::string>();
-        if (j.contains("disable_dtls")) cfg.disable_dtls = j["disable_dtls"].get<bool>();
+        if (j.contains("disable_dtls")) {
+            cfg.disable_dtls = j["disable_dtls"].get<bool>();
+            cfg.dtls_mode = cfg.disable_dtls ? "disabled" : "auto";
+        }
+        if (j.contains("dtls_mode")) {
+            cfg.dtls_mode = j["dtls_mode"].get<std::string>();
+            if (cfg.dtls_mode != "auto" && cfg.dtls_mode != "enabled" &&
+                cfg.dtls_mode != "disabled") {
+                return "dtls_mode must be auto, enabled, or disabled";
+            }
+            cfg.disable_dtls = cfg.dtls_mode == "disabled";
+        }
         if (j.contains("routes")) cfg.routes = j["routes"].get<std::vector<std::string>>();
         if (j.contains("extra_args")) cfg.extra_args = j["extra_args"].get<std::vector<std::string>>();
         if (j.contains("log_file")) cfg.log_file = j["log_file"].get<std::string>();
@@ -286,6 +333,13 @@ std::string config_import(config::ConfigManager& mgr, const std::string& json_st
         if (j.contains("windows_tunnel_driver")) cfg.windows_tunnel_driver = j["windows_tunnel_driver"].get<std::string>();
         if (j.contains("windows_tap_interface")) cfg.windows_tap_interface = j["windows_tap_interface"].get<std::string>();
         if (j.contains("auto_reconnect")) cfg.auto_reconnect = j["auto_reconnect"].get<bool>();
+        if (j.contains("retry_limit")) {
+            const int retry_limit = j["retry_limit"].get<int>();
+            if (retry_limit < 0) {
+                return "retry_limit must be 0 or a positive integer";
+            }
+            cfg.retry_limit = retry_limit;
+        }
         if (j.contains("minimal_mode")) cfg.minimal_mode = j["minimal_mode"].get<bool>();
         if (j.contains("service_install_prompt_seen")) cfg.service_install_prompt_seen = j["service_install_prompt_seen"].get<bool>();
         if (j.contains("minimal_install_service_before_connect")) cfg.minimal_install_service_before_connect = j["minimal_install_service_before_connect"].get<bool>();
@@ -293,6 +347,8 @@ std::string config_import(config::ConfigManager& mgr, const std::string& json_st
         if (j.contains("include_class_b_private_routes")) cfg.include_class_b_private_routes = j["include_class_b_private_routes"].get<bool>();
         if (j.contains("launch_at_login")) cfg.launch_at_login = j["launch_at_login"].get<bool>();
         if (j.contains("auto_connect_on_launch")) cfg.auto_connect_on_launch = j["auto_connect_on_launch"].get<bool>();
+        if (j.contains("silent_startup")) cfg.silent_startup = j["silent_startup"].get<bool>();
+        if (j.contains("connection_state_notifications")) cfg.connection_state_notifications = j["connection_state_notifications"].get<bool>();
 
         if (j.contains("password")) {
             std::string pw = j["password"].get<std::string>();

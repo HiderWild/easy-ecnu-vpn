@@ -4,8 +4,8 @@
 #define WIN32_LEAN_AND_MEAN
 #endif
 #include <windows.h>
+#include <shlobj.h>
 
-#include <cstdlib>
 #include <string>
 
 namespace exv {
@@ -21,27 +21,62 @@ std::string join_windows_path(const std::string &base,
   return base + "\\" + component;
 }
 
-std::string local_app_data_root() {
-  const char *local_app_data = std::getenv("LOCALAPPDATA");
-  if (local_app_data && *local_app_data)
-    return local_app_data;
+bool is_ascii_drive_letter(wchar_t ch) {
+  return (ch >= L'A' && ch <= L'Z') || (ch >= L'a' && ch <= L'z');
+}
 
-  const char *user_profile = std::getenv("USERPROFILE");
-  if (user_profile && *user_profile) {
-    return join_windows_path(join_windows_path(user_profile, "AppData"),
-                             "Local");
+bool is_absolute_local_windows_path(const std::wstring &path) {
+  return path.size() >= 3 && is_ascii_drive_letter(path[0]) &&
+         path[1] == L':' && (path[2] == L'\\' || path[2] == L'/');
+}
+
+std::string narrow_windows_path(const std::wstring &path) {
+  if (path.empty()) {
+    return {};
   }
 
-  const char *program_data = std::getenv("ProgramData");
-  if (program_data && *program_data)
-    return program_data;
+  const int required =
+      WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.c_str(), -1,
+                          nullptr, 0, nullptr, nullptr);
+  if (required <= 1) {
+    return {};
+  }
+
+  std::string result(static_cast<size_t>(required), '\0');
+  const int written =
+      WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, path.c_str(), -1,
+                          result.data(), required, nullptr, nullptr);
+  if (written <= 1) {
+    return {};
+  }
+  result.resize(static_cast<size_t>(written - 1));
+  return result;
+}
+
+std::string program_data_root() {
+  PWSTR known_path = nullptr;
+  const HRESULT hr =
+      SHGetKnownFolderPath(FOLDERID_ProgramData, KF_FLAG_DEFAULT, nullptr,
+                           &known_path);
+  if (SUCCEEDED(hr) && known_path) {
+    const std::wstring root(known_path);
+    CoTaskMemFree(known_path);
+    if (is_absolute_local_windows_path(root)) {
+      const std::string narrowed = narrow_windows_path(root);
+      if (!narrowed.empty()) {
+        return narrowed;
+      }
+    }
+  } else if (known_path) {
+    CoTaskMemFree(known_path);
+  }
 
   return "C:\\ProgramData";
 }
 
 std::string stable_helper_path() {
   return join_windows_path(
-      join_windows_path(join_windows_path(local_app_data_root(), "EXV"),
+      join_windows_path(join_windows_path(program_data_root(), "EXV"),
                         "Helper"),
       "exv-helper.exe");
 }

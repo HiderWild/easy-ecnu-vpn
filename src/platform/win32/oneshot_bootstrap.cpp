@@ -118,8 +118,13 @@ bool start_helper_direct(const std::string &helper_path,
   BOOL created =
       CreateProcessA(helper_path.c_str(), mutable_cmd.data(), NULL, NULL, FALSE,
                      CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-  if (!created)
+  if (!created) {
+    exv::observability::LogFacade::event(
+        "ERROR", "helper", "helper.oneshot.create_process_failed",
+        "Failed to create one-shot helper process",
+        {{"win32_error", std::to_string(GetLastError())}});
     return false;
+  }
 
   if (pid)
     *pid = static_cast<int>(pi.dwProcessId);
@@ -163,7 +168,12 @@ bool start_helper_elevated_with_timeout(const std::string &helper_path,
     sei.nShow = SW_HIDE;
 
     if (!ShellExecuteExA(&sei)) {
-      finish_elevated_launch(state, false, GetLastError(), -1);
+      const DWORD error = GetLastError();
+      exv::observability::LogFacade::event(
+          "WARN", "helper", "helper.oneshot.elevation_launch_failed",
+          "Failed to launch elevated one-shot helper",
+          {{"win32_error", std::to_string(error)}});
+      finish_elevated_launch(state, false, error, -1);
       return;
     }
 
@@ -197,11 +207,18 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
   backend.transport = "named-pipe";
 
   if (request.helper_path.empty()) {
+    exv::observability::LogFacade::event(
+        "WARN", "helper", "helper.oneshot.path_missing",
+        "One-shot helper path is not available");
     backend.code = kOneshotNotSupportedCode;
     backend.message = "exv-helper.exe path is not available.";
     return backend;
   }
   if (!helper_executable_exists(request.helper_path)) {
+    exv::observability::LogFacade::event(
+        "ERROR", "helper", "helper.oneshot.binary_missing",
+        "One-shot helper executable was not found",
+        {{"path", request.helper_path}});
     backend.code = kServiceStartFailedCode;
     backend.message = "exv-helper.exe was not found: " + request.helper_path;
     return backend;
@@ -216,6 +233,9 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
   backend.owner = current_owner_sid();
   backend.parent_pid = static_cast<int>(GetCurrentProcessId());
   if (backend.owner.empty()) {
+    exv::observability::LogFacade::event(
+        "ERROR", "helper", "helper.oneshot.owner_unavailable",
+        "Unable to determine current Windows owner SID for one-shot helper");
     backend.code = kServiceStartFailedCode;
     backend.message = "Unable to determine the current Windows owner SID.";
     return backend;
@@ -230,6 +250,10 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
 
   if (platform::check_root()) {
     if (!start_helper_direct(request.helper_path, args, &backend.pid)) {
+      exv::observability::LogFacade::event(
+          "ERROR", "helper", "helper.oneshot.start_failed",
+          "Failed to start elevated one-shot helper directly",
+          {{"path", request.helper_path}});
       backend.code = kServiceStartFailedCode;
       backend.message = "Failed to start elevated one-shot helper.";
       return backend;
@@ -239,6 +263,9 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
     if (!start_helper_elevated_with_timeout(request.helper_path, args,
                                             &backend.pid, &err)) {
       if (err == WAIT_TIMEOUT) {
+        exv::observability::LogFacade::event(
+            "WARN", "helper", "helper.oneshot.elevation_timeout",
+            "Timed out waiting for elevated one-shot helper launch");
         backend.code = kServiceStartFailedCode;
         backend.message =
             "启动提权的一次性助手超时，请检查 UAC 提示是否被遮挡，"
@@ -247,6 +274,14 @@ OneshotBackend start_oneshot_helper(const OneshotBootstrapRequest &request) {
       }
       backend.code = err == ERROR_CANCELLED ? kOneshotElevationDeniedCode
                                             : kServiceStartFailedCode;
+      exv::observability::LogFacade::event(
+          err == ERROR_CANCELLED ? "WARN" : "ERROR", "helper",
+          err == ERROR_CANCELLED ? "helper.oneshot.elevation_cancelled"
+                                 : "helper.oneshot.elevation_failed",
+          err == ERROR_CANCELLED
+              ? "User cancelled one-shot helper elevation"
+              : "Failed to start elevated one-shot helper",
+          {{"win32_error", std::to_string(err)}});
       backend.message = err == ERROR_CANCELLED
                             ? "管理员授权已取消，请允许 UAC 提权后重试。"
                             : "启动提权的一次性助手失败，请以管理员身份运行 start.ps1 后重试。";

@@ -20,6 +20,8 @@ public:
       TunnelController &controller,
       const exv::vpn_engine::TunnelMetadata &metadata,
       exv::vpn_engine::DeviceConfig *device_config);
+
+  static void run_core_lease_keepalive(TunnelController &controller);
 };
 
 } // namespace exv::core

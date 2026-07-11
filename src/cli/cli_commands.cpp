@@ -59,12 +59,12 @@ ParsedArgs parse_args(const std::vector<std::string> &args) {
         return parsed;
       }
       parsed.retry_specified = true;
-      parsed.retry_limit = -1;
+      parsed.retry_limit = 0;
       if (i + 1 < args.size()) {
         auto value = try_parse_int(args[i + 1]);
         if (value.has_value()) {
-          if (*value < -1) {
-            parsed.error = "-rt only accepts -1, 0, or positive.";
+          if (*value < 0) {
+            parsed.error = "-rt only accepts 0 or positive.";
             return parsed;
           }
           parsed.retry_limit = *value;
@@ -193,7 +193,8 @@ int handle_start(const CliCommandDeps &deps, const ParsedArgs &parsed) {
   }
   if (parsed.retry_specified) {
     nlohmann::json payload;
-    payload["settings"] = nlohmann::json{{"retry_limit", parsed.retry_limit}};
+    payload["settings"] = nlohmann::json{{"auto_reconnect", true},
+                                          {"retry_limit", parsed.retry_limit}};
     int rc = send_action(deps, *core, "config.saveSettings", payload);
     if (rc != 0) {
       return rc;
@@ -347,8 +348,21 @@ int handle_config(const std::vector<std::string> &args, const CliCommandDeps &de
         err_stream(deps) << "Config key '" << key << "' requires an integer value.\n";
         return 1;
       }
+      if (key == "retry_limit" && *parsed_value < 0) {
+        err_stream(deps)
+            << "Config key 'retry_limit' requires 0 or positive.\n";
+        return 1;
+      }
       action = "config.saveSettings";
       payload["settings"] = nlohmann::json{{key, *parsed_value}};
+    } else if (key == "dtls_mode") {
+      if (!is_one_of(value, {"auto", "enabled", "disabled"})) {
+        err_stream(deps)
+            << "Config key 'dtls_mode' requires auto, enabled, or disabled.\n";
+        return 1;
+      }
+      action = "config.saveSettings";
+      payload["settings"] = nlohmann::json{{key, value}};
     } else if (is_one_of(key, {"dtls", "disable_dtls", "remember_password",
                                "auto_reconnect", "minimal_mode",
                                "service_install_prompt_seen",
@@ -356,7 +370,9 @@ int handle_config(const std::vector<std::string> &args, const CliCommandDeps &de
                                "include_class_a_private_routes",
                                "include_class_b_private_routes",
                                "launch_at_login",
-                               "auto_connect_on_launch"})) {
+                               "auto_connect_on_launch",
+                               "silent_startup",
+                               "connection_state_notifications"})) {
       auto parsed_value = try_parse_bool(value);
       if (!parsed_value.has_value()) {
         err_stream(deps) << "Config key '" << key << "' requires true or false.\n";

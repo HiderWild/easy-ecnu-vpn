@@ -1,6 +1,8 @@
 #pragma once
+#include <cstdint>
 #include <string>
 #include <optional>
+#include "connect_progress.hpp"
 #include "tunnel_intent.hpp"
 
 namespace exv::core {
@@ -52,6 +54,8 @@ struct ReconnectInfo {
 };
 
 struct TunnelStatusSnapshot {
+    std::uint64_t runtime_epoch = 0;
+    std::uint64_t controller_id = 0;
     TunnelPhase phase = TunnelPhase::Idle;
     bool desired_connected = false;
     bool auto_reconnect = true;
@@ -64,8 +68,14 @@ struct TunnelStatusSnapshot {
     std::string server;
     std::string interface_name;
     std::string internal_ip;
+    std::string dtls_mode = "auto";
+    std::string active_data_channel = "cstp_tls";
+    std::string dtls_state = "disabled";
+    std::string dtls_fallback_reason;
+    int dtls_fallback_count = 0;
     std::optional<ErrorInfo> last_error;
     std::optional<ReconnectInfo> reconnect;
+    ConnectProgress connect_progress;
 };
 
 } // namespace exv::core

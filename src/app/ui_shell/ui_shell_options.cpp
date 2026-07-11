@@ -110,8 +110,10 @@ UiShellOptions parse_ui_shell_options(int argc, char **argv) {
       options.enable_dev_tools = true;
     } else if (arg == "--show-window") {
       options.start_hidden = false;
+      options.start_visibility_explicit = true;
     } else if (arg == "--hide-window") {
       options.start_hidden = true;
+      options.start_visibility_explicit = true;
     }
   }
   return options;
@@ -170,7 +172,10 @@ UiShellOptions resolve_ui_shell_options(
   const std::filesystem::path package_root = packaged_options_root(executable_path);
   UiShellOptions packaged_options =
       load_packaged_ui_shell_options(executable_path);
-  packaged_options.start_hidden = options.start_hidden;
+  if (options.start_visibility_explicit) {
+    packaged_options.start_hidden = options.start_hidden;
+    packaged_options.start_visibility_explicit = true;
+  }
   if (validate_ui_shell_options(packaged_options).empty() &&
       validate_packaged_ui_shell_options(packaged_options, package_root).empty()) {
     return packaged_options;

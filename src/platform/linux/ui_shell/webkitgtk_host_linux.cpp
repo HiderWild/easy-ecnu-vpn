@@ -104,6 +104,10 @@ const char *bridge_script() {
     },
     window: {
       setMode: () => Promise.resolve(),
+      resizeForMode: () => Promise.resolve({ ok: true, mode: 'advanced' }),
+      minimize: () => Promise.resolve({ ok: true }),
+      hideToTray: () => Promise.resolve({ ok: true }),
+      requestClose: () => Promise.resolve({ ok: true }),
       getClosePreference: () => Promise.resolve({ action: null }),
       setClosePreference: (action) => Promise.resolve({ ok: true, action }),
       resetClosePreference: () => Promise.resolve({ ok: true }),
@@ -212,6 +216,11 @@ bool webkitgtk_supports_start_hidden_contract() noexcept {
 std::vector<WebKitGtkTrayMenuItem> webkitgtk_tray_menu_model(
     const exv::ui_shell::TrayStatusSnapshot &snapshot) {
   std::vector<WebKitGtkTrayMenuItem> items;
+  if (!snapshot.connected) {
+    items.push_back({"显示主界面", kTrayCommandShow, false, true});
+    items.push_back({"退出", kTrayCommandQuit, false, true});
+    return items;
+  }
   for (const auto &label : exv::ui_shell::tray_status_snapshot_menu_labels(
            snapshot)) {
     items.push_back({label, 0, false, false});
@@ -219,7 +228,7 @@ std::vector<WebKitGtkTrayMenuItem> webkitgtk_tray_menu_model(
   items.push_back({"", 0, true, false});
   items.push_back({"断开连接", kTrayCommandDisconnect, false,
                    snapshot.connected});
-  items.push_back({"显示 EXV", kTrayCommandShow, false, true});
+  items.push_back({"显示主界面", kTrayCommandShow, false, true});
   items.push_back({"", 0, true, false});
   items.push_back({"退出", kTrayCommandQuit, false, true});
   return items;

@@ -8,6 +8,25 @@ export interface ChangelogEntry {
 
 export const changelogEntries: ChangelogEntry[] = [
   {
+    version: '3.3.7',
+    title: 'helper 断开后的连接恢复',
+    dateLabel: '2026-07-06',
+    highlights: [
+      '连接成功后如果 service 或 oneshot helper 被终止，核心会回收连接 attempt 与 active tunnel guard，避免下一次连接被误判为仍在进行。',
+      '连接创建期间 helper 意外退出时，vpn.connect 会识别本进程的 PreparingHelper 残留并自动重试，避免继续报 Helper connection could not be established。',
+      '重连恢复期间即使 helper 状态仍显示 connected，只要存在旧 session 或 CoreLease 残留，也会清理同进程连接守卫并允许用户重试。',
+      '已连接后 helper 控制管道断开时只标记辅助服务不可用，不再把 Helper control pipe disconnected during VPN session 当作阻塞错误弹窗。',
+      '连接过程中 CoreLease 或 helper 控制面先降级、但 native 数据面随后成功时，核心会清理控制面旧错误，不再在已连接状态弹出 Helper control pipe disconnected during VPN session。',
+      '修复旧 helper 重连失败晚到时覆盖新连接成功状态的问题，已连接后会清除过期错误模态。',
+      '重连启动前会向当前 helper 验证旧 CoreLease，helper 已重启时会重新获取租约，避免连接已恢复却弹出 empty session_id 错误。',
+      '核心状态汇聚层会在 controller 已连接时清理或抑制迟到的连接失败，并等待已接受启动的 helper service 真正可用后再判定结果。',
+      'vpn.connect 遇到同进程 stale guard 时会先核对本地 runtime 终止态，清理成功后自动重试一次。',
+      '修正启动重置发布空闲状态时误释放 active tunnel guard 的竞态，避免 oneshot 重连前的资源守卫被提前清掉。',
+      '修复 helper 被结束后旧重连 controller 与用户重试并行的竞态，避免重试已成功却因核心 RPC transport 关闭继续弹错。',
+      '补充 helper 生命周期 reconcile 与连接 attempt retry 日志，便于定位服务被结束、管道断开和重连被阻塞的原因。',
+    ],
+  },
+  {
     version: '3.3.6',
     title: '连接清理与服务维护稳定性',
     dateLabel: '2026-06-28',

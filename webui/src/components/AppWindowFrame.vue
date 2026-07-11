@@ -2,6 +2,10 @@
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
 import { Minus, X } from 'lucide-vue-next'
 import appIconUrl from '../assets/app-icon.svg'
+import ModeSegmentedControl from './ModeSegmentedControl.vue'
+import TitlebarThemeModeControl from './TitlebarThemeModeControl.vue'
+import { useConfigStore } from '../stores/config'
+import { useThemeStore, type ThemeMode } from '../stores/theme'
 import type { DesktopWindowControl } from '../types/exv'
 
 type WindowMode = 'advanced' | 'minimal'
@@ -14,6 +18,8 @@ const props = defineProps<{
   mode: WindowMode
 }>()
 
+const config = useConfigStore()
+const theme = useThemeStore()
 const appliedMode = ref<WindowMode>(props.mode)
 const visualMode = ref<WindowMode>(props.mode)
 const transitionPhase = ref<TransitionPhase>('idle')
@@ -125,6 +131,15 @@ async function requestWindowClose() {
   await window.exv?.window?.requestClose()
 }
 
+function handleTitlebarModeChange(mode: WindowMode) {
+  if (mode === props.mode) return
+  void config.saveSettings({ minimal_mode: mode === 'minimal' })
+}
+
+function handleTitlebarThemeModeChange(mode: ThemeMode) {
+  theme.setThemeMode(mode)
+}
+
 function startWindowDrag(event: PointerEvent) {
   if (isWindows.value) return
   if (event.button !== 0) return
@@ -187,31 +202,48 @@ onUnmounted(() => {
             <img class="app-window-titlebar__icon" :src="appIconUrl" alt="" />
             <span class="app-window-titlebar__title" aria-hidden="true">EXV</span>
           </div>
-          <div
-            v-if="isWindows"
-            class="app-window-titlebar__controls"
-            data-window-control-region="true"
-          >
-            <button
-              type="button"
-              class="app-window-titlebar__button"
-              :class="windowControlButtonClass('minimize')"
-              aria-label="最小化"
-              :disabled="transitionActive"
-              @click="minimizeWindow"
+          <div class="app-window-titlebar__right" data-window-control-region="true">
+            <div class="app-window-titlebar__toolbar">
+              <TitlebarThemeModeControl
+                class="app-window-titlebar__theme-control"
+                :model-value="theme.mode"
+                :disabled="transitionActive"
+                :icon-only="visualMode === 'minimal'"
+                @update:model-value="handleTitlebarThemeModeChange"
+              />
+              <ModeSegmentedControl
+                class="app-window-titlebar__mode-control"
+                :model-value="visualMode"
+                :disabled="transitionActive"
+                :icon-only="visualMode === 'minimal'"
+                @update:model-value="handleTitlebarModeChange"
+              />
+            </div>
+            <div
+              v-if="isWindows"
+              class="app-window-titlebar__controls"
             >
-              <Minus class="h-3.5 w-3.5" />
-            </button>
-            <button
-              type="button"
-              class="app-window-titlebar__button app-window-titlebar__button--close"
-              :class="windowControlButtonClass('close')"
-              aria-label="关闭"
-              :disabled="transitionActive"
-              @click="requestWindowClose"
-            >
-              <X class="h-3.5 w-3.5" />
-            </button>
+              <button
+                type="button"
+                class="app-window-titlebar__button"
+                :class="windowControlButtonClass('minimize')"
+                aria-label="最小化"
+                :disabled="transitionActive"
+                @click="minimizeWindow"
+              >
+                <Minus class="h-3.5 w-3.5" />
+              </button>
+              <button
+                type="button"
+                class="app-window-titlebar__button app-window-titlebar__button--close"
+                :class="windowControlButtonClass('close')"
+                aria-label="关闭"
+                :disabled="transitionActive"
+                @click="requestWindowClose"
+              >
+                <X class="h-3.5 w-3.5" />
+              </button>
+            </div>
           </div>
         </header>
 
@@ -226,12 +258,12 @@ onUnmounted(() => {
 <style scoped>
 .app-window-frame {
   --titlebar-height: 34px;
-  --advanced-width: 972px;
+  --advanced-width: 879px;
   --advanced-height: 563px;
-  --minimal-width: 302px;
-  --minimal-height: 118px;
+  --minimal-width: 328px;
+  --minimal-height: 136px;
   --mac-traffic-light-inset: 78px;
-  --window-radius: 8px;
+  --window-radius: 12px;
   --app-window-border-color: rgba(148, 163, 184, 0.32);
   --app-window-shadow-margin: 0px;
   --app-window-shadow-margin-total: 0px;
@@ -342,6 +374,34 @@ onUnmounted(() => {
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0;
+}
+
+.app-window-titlebar__right {
+  display: flex;
+  height: 100%;
+  min-width: 0;
+  margin-left: auto;
+  align-items: center;
+  gap: 12px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.app-window-titlebar__toolbar {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.app-window-frame--minimal .app-window-titlebar__right {
+  gap: 8px;
+}
+
+.app-window-frame--minimal .app-window-titlebar__toolbar {
+  gap: 6px;
 }
 
 .app-window-titlebar__controls {

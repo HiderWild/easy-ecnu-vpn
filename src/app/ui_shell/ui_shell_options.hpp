@@ -12,6 +12,7 @@ struct UiShellOptions {
   std::string state_dir;
   bool enable_dev_tools = false;
   bool start_hidden = false;
+  bool start_visibility_explicit = false;
 };
 
 UiShellOptions parse_ui_shell_options(int argc, char **argv);

@@ -84,6 +84,7 @@ function defaultSettingsDraft(): SettingsConfig {
   return {
     mtu: 1400,
     dtls: true,
+    dtls_mode: 'auto',
     extra_args: '',
     log_path: '',
     webui_port: 18080,
@@ -93,14 +94,17 @@ function defaultSettingsDraft(): SettingsConfig {
     windows_tunnel_driver: 'auto',
     windows_tap_interface: '',
     auto_reconnect: true,
-    retry_limit: -1,
+    retry_limit: 0,
     minimal_mode: false,
     service_install_prompt_seen: false,
     minimal_install_service_before_connect: true,
+    minimize_to_tray_on_connect: false,
     include_class_a_private_routes: false,
     include_class_b_private_routes: false,
     launch_at_login: false,
     auto_connect_on_launch: false,
+    silent_startup: false,
+    connection_state_notifications: false,
   }
 }
 
@@ -207,11 +211,15 @@ watch(
 function buildDirtyBackendPayloads() {
   const authPayload: Partial<AuthConfig> = {}
   const settingsPayload: Partial<SettingsConfig> = {}
+  const frontendOnlySettingsPayload: Partial<SettingsConfig> = {}
   let frontendOnlyChanged = false
 
   for (const change of dirtyChanges.value) {
     if (change.key in frontendOnlySettingsFields) {
       frontendOnlyChanged = true
+      const descriptor =
+        frontendOnlySettingsFields[change.key as keyof typeof frontendOnlySettingsFields]
+      ;(frontendOnlySettingsPayload as Record<string, unknown>)[descriptor.field] = change.current
       continue
     }
     const descriptor = frontendToBackendFieldMap[change.key as keyof typeof frontendToBackendFieldMap]
@@ -224,14 +232,20 @@ function buildDirtyBackendPayloads() {
     }
   }
 
-  return { authPayload, settingsPayload, frontendOnlyChanged }
+  return { authPayload, settingsPayload, frontendOnlyChanged, frontendOnlySettingsPayload }
 }
 
 async function saveDirtyChanges() {
   if (!dirtyChanges.value.length || savingSettings.value) return
-  const { authPayload, settingsPayload, frontendOnlyChanged } = buildDirtyBackendPayloads()
+  const {
+    authPayload,
+    settingsPayload,
+    frontendOnlyChanged,
+    frontendOnlySettingsPayload,
+  } = buildDirtyBackendPayloads()
   const authChanged = Object.keys(authPayload).length > 0
   const settingsChanged = Object.keys(settingsPayload).length > 0
+  const frontendOnlySettingsChanged = Object.keys(frontendOnlySettingsPayload).length > 0
 
   const nextUsername = String(authPayload.username ?? authDraft.username).trim()
   const nextRememberPassword = Boolean(authPayload.remember_password ?? authDraft.remember_password)
@@ -251,6 +265,10 @@ async function saveDirtyChanges() {
     }
     if (settingsChanged) {
       await config.saveSettings(settingsPayload)
+      Object.assign(settingsDraft, config.settings)
+    }
+    if (frontendOnlySettingsChanged) {
+      await config.saveSettings(frontendOnlySettingsPayload)
       Object.assign(settingsDraft, config.settings)
     }
     void frontendOnlyChanged
@@ -498,9 +516,9 @@ watch(
 
 <template>
   <div class="relative h-full overflow-hidden">
-    <div class="flex h-full flex-col pr-8">
+      <div class="flex h-full flex-col pr-8">
       <header class="settings-header shrink-0 border-b border-border/70 bg-bg/95 py-3 backdrop-blur">
-        <div class="mx-auto flex max-w-4xl items-center gap-4">
+        <div class="settings-page__content-shell flex items-center gap-4">
           <h1 class="text-3xl font-semibold text-foreground">设置</h1>
 
           <div class="relative">
@@ -539,7 +557,7 @@ watch(
       </header>
 
       <div ref="scrollRoot" class="settings-scroll settings-scroll-body min-h-0 flex-1 overflow-y-auto py-4">
-        <div class="mx-auto max-w-4xl space-y-5">
+        <div class="settings-page__content-shell space-y-5">
           <section
             v-for="section in sections"
             :id="sectionHash(section.key).slice(1)"
@@ -568,6 +586,13 @@ watch(
 </template>
 
 <style scoped>
+.settings-page__content-shell {
+  width: 90%;
+  max-width: none;
+  min-width: 0;
+  margin-inline: auto;
+}
+
 .settings-scroll {
   scrollbar-width: none;
   -ms-overflow-style: none;

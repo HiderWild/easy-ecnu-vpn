@@ -8,6 +8,16 @@ namespace exv::core {
 // Event handlers (called from on_event)
 // ================================================================
 
+void TunnelController::Impl::request_recovery(const std::string &reason,
+                                              const ErrorInfo &error) {
+        transition_to(TunnelPhase::Reconnecting);
+        cleanup_after_recovery_request(reason);
+        if (recovery_callback_) {
+            recovery_callback_(TunnelRecoveryRequest{
+                runtime_epoch_, controller_id_, reason, error});
+        }
+    }
+
 void TunnelController::Impl::on_helper_ready() {
         if (phase_ == TunnelPhase::PreparingHelper) {
             timing_.timer.start(ConnectTiming::AUTH);
@@ -91,6 +101,7 @@ void TunnelController::Impl::complete_packet_loop_started() {
             log_tunnel_event("INFO", "packet.loop.started", "Packet loop started",
                              {{"session_id", session_id_.value}});
             timing_.timer.end(ConnectTiming::PACKET_DEVICE);
+            clear_helper_control_plane_error();
             transition_to(TunnelPhase::Connected);
             log_tunnel_event("INFO", "connect.connected", "Tunnel connected",
                              {{"session_id", session_id_.value}});
@@ -120,7 +131,7 @@ void TunnelController::Impl::on_transport_closed() {
         auto err = CoreErrorMapper::from_transport_error(-1, "transport");
 
         if (intent_.auto_reconnect) {
-            attempt_reconnect(err);
+            request_recovery("transport_closed", err);
         } else {
             set_error(err);
             transition_to(TunnelPhase::Failed);
@@ -159,7 +170,7 @@ void TunnelController::Impl::on_lease_expired() {
         err.recoverable = true;
 
         if (intent_.auto_reconnect) {
-            attempt_reconnect(err);
+            request_recovery("lease_expired", err);
         } else {
             set_error(err);
             transition_to(TunnelPhase::Failed);
@@ -171,32 +182,11 @@ void TunnelController::Impl::on_reconnect_timer_fired() {
             return;
         }
 
-        if (!vpn_password_.empty()) {
-            scheduler_.cancel_all();
-            stop_heartbeat();
-            if (core_lease_keepalive_active_) {
-                schedule_next_core_lease_keepalive();
-            }
-            runner_.stop();
-
-            if ((network_config_applied_ || !session_id_.value.empty()) && helper_) {
-                shutdown_helper_session_for_cleanup();
-            } else {
-                if (auto delegated_ops = as_helper_delegating_ops(net_ops_)) {
-                    delegated_ops->clear_session();
-                }
-                session_id_ = exv::helper::SessionId{};
-                network_config_applied_ = false;
-            }
-
-            do_connect();
-            return;
-        }
-
-        // Retry the fallback connect flow starting from Authenticating.
-        // Tests without native VPN credentials manually drive subsequent events.
-        timing_.timer.start(ConnectTiming::AUTH);
-        transition_to(TunnelPhase::Authenticating);
+        log_tunnel_event(
+            "INFO", "reconnect.timer.ignored",
+            "Reconnect timer fired after coordinator-owned recovery",
+            {{"runtime_epoch", std::to_string(runtime_epoch_)},
+             {"controller_id", std::to_string(controller_id_)}});
     }
 
 void TunnelController::Impl::on_helper_lost() {
@@ -208,22 +198,22 @@ void TunnelController::Impl::on_helper_lost() {
         stop_heartbeat();
         helper_connected_seen_ = false;
         helper_status_override_ = "unavailable";
+        core_lease_id_.clear();
+        stop_core_lease_keepalive();
+
+        if (helper_control_plane_loss_is_degradable()) {
+            mark_helper_control_plane_degraded(
+                "helper_lost",
+                "Helper process disconnected unexpectedly");
+            return;
+        }
 
         auto err = CoreErrorMapper::from_helper_error(
             "helper_lost", "Helper process disconnected unexpectedly");
 
         if (intent_.auto_reconnect) {
-            // Reuse the existing helper (the privilege "spark"): reconnect to
-            // the same endpoint rather than re-running runas / starting a new
-            // one-shot helper. Only if the reconnect fails do we surface Failed.
-            try {
-                if (helper_ && helper_->connect()) {
-                    attempt_reconnect(err);
-                    return;
-                }
-            } catch (...) {
-                // Helper reconnection failed — fall through.
-            }
+            request_recovery("helper_lost", err);
+            return;
         }
 
         set_error(err);

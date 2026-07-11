@@ -47,12 +47,29 @@ void TimerScheduler::cancel_all() {
     pending_.clear();
 }
 
+void TimerScheduler::cancel_all_and_wait() {
+    std::unique_lock<std::mutex> lk(mtx_);
+    pending_.clear();
+    if (std::this_thread::get_id() == worker_id_) {
+        return;
+    }
+    done_cv_.wait(lk, [this] {
+        return active_callbacks_ == 0;
+    });
+    pending_.clear();
+}
+
 std::size_t TimerScheduler::pending_count() const {
     std::lock_guard<std::mutex> lk(mtx_);
     return pending_.size();
 }
 
 void TimerScheduler::worker_loop() {
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
+        worker_id_ = std::this_thread::get_id();
+    }
+
     for (;;) {
         std::unique_lock<std::mutex> lk(mtx_);
 
@@ -79,11 +96,16 @@ void TimerScheduler::worker_loop() {
             // then execute outside the lock.
             Callback cb = std::move(earliest->cb);
             pending_.erase(earliest);
+            ++active_callbacks_;
             lk.unlock();
 
             if (cb) {
                 cb();
             }
+
+            lk.lock();
+            --active_callbacks_;
+            done_cv_.notify_all();
         } else {
             // Copy the deadline out of pending_. schedule() may reallocate the
             // vector while wait_until releases the lock, invalidating iterators

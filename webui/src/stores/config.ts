@@ -15,9 +15,12 @@ export interface AuthConfig {
   remember_password: boolean
 }
 
+export type DtlsSettingsMode = 'auto' | 'enabled' | 'disabled'
+
 export interface SettingsConfig {
   mtu: number
   dtls: boolean
+  dtls_mode: DtlsSettingsMode
   extra_args: string
   log_path: string
   webui_port: number
@@ -31,10 +34,13 @@ export interface SettingsConfig {
   minimal_mode: boolean
   service_install_prompt_seen: boolean
   minimal_install_service_before_connect: boolean
+  minimize_to_tray_on_connect: boolean
   include_class_a_private_routes: boolean
   include_class_b_private_routes: boolean
   launch_at_login: boolean
   auto_connect_on_launch: boolean
+  silent_startup: boolean
+  connection_state_notifications: boolean
 }
 
 export interface KeyStatus {
@@ -89,31 +95,76 @@ export interface DriverStatus {
 }
 
 export const useConfigStore = defineStore('config', () => {
-  function readLocalBool(key: 'exv:minimal-mode', fallback: boolean) {
+  const dtlsModeStorageKey = 'exv:dtls-mode'
+  type FrontendLocalBoolKey = 'exv:minimal-mode' | 'exv:minimize-to-tray-on-connect'
+
+  function readLocalBool(key: FrontendLocalBoolKey, fallback: boolean) {
     if (typeof localStorage === 'undefined') return fallback
-    if (key !== 'exv:minimal-mode') return fallback
-    const value = localStorage.getItem('exv:minimal-mode')
+    const value = localStorage.getItem(key)
     if (value === 'true') return true
     if (value === 'false') return false
     return fallback
   }
 
-  function writeLocalBool(key: 'exv:minimal-mode', value: boolean) {
+  function writeLocalBool(key: FrontendLocalBoolKey, value: boolean) {
     if (typeof localStorage === 'undefined') return
-    if (key !== 'exv:minimal-mode') return
-    localStorage.setItem('exv:minimal-mode', value ? 'true' : 'false')
+    localStorage.setItem(key, value ? 'true' : 'false')
+  }
+
+  function normalizeDtlsMode(value: unknown): DtlsSettingsMode | null {
+    return value === 'auto' || value === 'enabled' || value === 'disabled' ? value : null
+  }
+
+  function normalizeRetryLimit(value: unknown) {
+    return typeof value === 'number' && Number.isFinite(value) && value >= 0
+      ? Math.trunc(value)
+      : 0
+  }
+
+  function readLocalDtlsMode(fallback: DtlsSettingsMode): DtlsSettingsMode {
+    if (typeof localStorage === 'undefined') return fallback
+    return normalizeDtlsMode(localStorage.getItem(dtlsModeStorageKey)) ?? fallback
+  }
+
+  function writeLocalDtlsMode(value: DtlsSettingsMode) {
+    if (typeof localStorage === 'undefined') return
+    localStorage.setItem(dtlsModeStorageKey, value)
+  }
+
+  function inferDtlsMode(next: SettingsConfig): DtlsSettingsMode {
+    if (!next.dtls) return 'disabled'
+    const remote = normalizeDtlsMode(next.dtls_mode)
+    if (remote) return remote
+    const stored = readLocalDtlsMode('auto')
+    return stored === 'disabled' ? 'auto' : stored
   }
 
   function applyFrontendLocalSettings(next: SettingsConfig) {
     return {
       ...next,
+      dtls_mode: inferDtlsMode(next),
+      retry_limit: normalizeRetryLimit(next.retry_limit),
       minimal_mode: readLocalBool('exv:minimal-mode', next.minimal_mode),
+      minimize_to_tray_on_connect: readLocalBool(
+        'exv:minimize-to-tray-on-connect',
+        next.minimize_to_tray_on_connect ?? false,
+      ),
     }
   }
 
   function persistFrontendLocalSettings(s: Partial<SettingsConfig>) {
     if (Object.prototype.hasOwnProperty.call(s, 'minimal_mode') && s.minimal_mode != null) {
       writeLocalBool('exv:minimal-mode', s.minimal_mode)
+    }
+    if (
+      Object.prototype.hasOwnProperty.call(s, 'minimize_to_tray_on_connect') &&
+      s.minimize_to_tray_on_connect != null
+    ) {
+      writeLocalBool('exv:minimize-to-tray-on-connect', s.minimize_to_tray_on_connect)
+    }
+    if (Object.prototype.hasOwnProperty.call(s, 'dtls_mode')) {
+      const mode = normalizeDtlsMode(s.dtls_mode)
+      if (mode) writeLocalDtlsMode(mode)
     }
   }
 
@@ -129,6 +180,7 @@ export const useConfigStore = defineStore('config', () => {
   const settings = ref<SettingsConfig>({
     mtu: 1400,
     dtls: true,
+    dtls_mode: readLocalDtlsMode('auto'),
     extra_args: '',
     log_path: '',
     webui_port: 18080,
@@ -138,25 +190,43 @@ export const useConfigStore = defineStore('config', () => {
     windows_tunnel_driver: 'auto',
     windows_tap_interface: '',
     auto_reconnect: true,
-    retry_limit: -1,
+    retry_limit: 0,
     minimal_mode: readLocalBool('exv:minimal-mode', false),
     service_install_prompt_seen: false,
     minimal_install_service_before_connect: true,
+    minimize_to_tray_on_connect: readLocalBool('exv:minimize-to-tray-on-connect', false),
     include_class_a_private_routes: false,
     include_class_b_private_routes: false,
     launch_at_login: false,
     auto_connect_on_launch: false,
+    silent_startup: false,
+    connection_state_notifications: false,
   })
 
   const keyStatus = ref<KeyStatus>({ available: false, present: false, status: 'missing' })
   const runtimeStatus = ref<RuntimeStatus | null>(null)
   const driverStatus = ref<DriverStatus | null>(null)
+  const authConfigLoaded = ref(false)
+  const authConfigLoadError = ref<string | null>(null)
+  const settingsLoaded = ref(false)
+  const settingsLoadError = ref<string | null>(null)
+
+  function loadErrorMessage(error: unknown) {
+    return error instanceof Error ? error.message : String(error)
+  }
 
   async function fetchAuthConfig() {
     try {
       const { data } = await api.get<AuthConfig>('/config/auth')
       authConfig.value = { ...authConfig.value, ...data }
-    } catch (e) { console.error('[config] fetchAuthConfig failed:', e) }
+      authConfigLoaded.value = true
+      authConfigLoadError.value = null
+      return true
+    } catch (e) {
+      authConfigLoadError.value = loadErrorMessage(e)
+      console.error('[config] fetchAuthConfig failed:', e)
+      return false
+    }
   }
 
   async function saveAuthConfig(config: Partial<AuthConfig>) {
@@ -178,30 +248,48 @@ export const useConfigStore = defineStore('config', () => {
     }
     const { data } = await api.put<AuthConfig>('/config/auth', payload)
     authConfig.value = { ...authConfig.value, ...data }
+    authConfigLoaded.value = true
+    authConfigLoadError.value = null
   }
 
   async function fetchSettings() {
     try {
       const { data } = await api.get<SettingsConfig>('/config/settings')
       settings.value = applyFrontendLocalSettings({ ...settings.value, ...data })
-    } catch (e) { console.error('[config] fetchSettings failed:', e) }
+      settingsLoaded.value = true
+      settingsLoadError.value = null
+      return true
+    } catch (e) {
+      settingsLoadError.value = loadErrorMessage(e)
+      console.error('[config] fetchSettings failed:', e)
+      return false
+    }
   }
 
-  async function saveSettings(s: Partial<SettingsConfig>) {
+  async function saveSettings(input: Partial<SettingsConfig>) {
+    const s = { ...input }
+    if (Object.prototype.hasOwnProperty.call(s, 'retry_limit')) {
+      s.retry_limit = normalizeRetryLimit(s.retry_limit)
+    }
     const previous = settings.value
     settings.value = { ...settings.value, ...s }
     persistFrontendLocalSettings(s)
     const remoteSettings = { ...s }
     delete remoteSettings.minimal_mode
+    delete remoteSettings.minimize_to_tray_on_connect
     if (Object.keys(remoteSettings).length === 0) return
 
     try {
       const { data } = await api.put<SettingsConfig>('/config/settings', remoteSettings)
       settings.value = applyFrontendLocalSettings({ ...settings.value, ...data })
+      settingsLoaded.value = true
+      settingsLoadError.value = null
     } catch (error) {
       settings.value = previous
       persistFrontendLocalSettings({
         minimal_mode: previous.minimal_mode,
+        minimize_to_tray_on_connect: previous.minimize_to_tray_on_connect,
+        dtls_mode: previous.dtls_mode,
       })
       throw error
     }
@@ -274,6 +362,8 @@ export const useConfigStore = defineStore('config', () => {
 
   return {
     authConfig, settings, keyStatus, runtimeStatus, driverStatus,
+    authConfigLoaded, authConfigLoadError,
+    settingsLoaded, settingsLoadError,
     fetchAuthConfig, saveAuthConfig,
     fetchSettings, saveSettings,
     fetchKeyStatus,

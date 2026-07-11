@@ -10,6 +10,11 @@
 
 namespace exv::platform::logging {
 
+std::mutex &stdout_stream_mutex() {
+  static std::mutex mutex;
+  return mutex;
+}
+
 StdoutLogSink::StdoutLogSink(std::ostream &out) : out_(out) {}
 
 void StdoutLogSink::write(const exv::observability::LogEvent &event) {
@@ -37,12 +42,12 @@ void StdoutLogSink::write(const exv::observability::LogEvent &event) {
       {"data", std::move(data)},
   };
 
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(stdout_stream_mutex());
   out_ << envelope.dump() << '\n' << std::flush;
 }
 
 void StdoutLogSink::flush() {
-  std::lock_guard<std::mutex> lock(mutex_);
+  std::lock_guard<std::mutex> lock(stdout_stream_mutex());
   out_ << std::flush;
 }
 

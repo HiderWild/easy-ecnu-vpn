@@ -4,6 +4,7 @@
 #include "vpn_engine/event_sink.hpp"
 #include "vpn_engine/packet_device.hpp"
 #include "vpn_engine/protocol/auth.hpp"
+#include "vpn_engine/protocol/dtls_policy.hpp"
 #include "vpn_engine/protocol/url.hpp"
 #include "vpn_engine/session_state.hpp"
 
@@ -44,9 +45,10 @@ struct ProtocolSessionOptions {
   std::string useragent;
   std::string auth_group;
   std::string csd_wrapper;
-  bool disable_dtls = true;
+  bool disable_dtls = false;
+  DtlsMode dtls_mode = DtlsMode::Auto;
   bool auto_reconnect = false;
-  int max_reconnects = 1;
+  int max_reconnects = 1; // Only used when auto_reconnect=true; 0 = unlimited.
   int packet_loop_no_data_poll_limit = 1000;
 
   // Safe tunnel MTU applied when the gateway-negotiated MTU is missing or out
@@ -122,6 +124,10 @@ public:
   // decode and classify it. Returns a transport_closed error only on underlying
   // stream EOF/interruption; peer control frames are returned as frame kinds.
   virtual ValidationResult receive_frame(InboundFrame *out) = 0;
+
+  virtual bool can_fallback_to_cstp() const { return false; }
+  virtual void fallback_to_cstp(const std::string & /*reason*/,
+                                const std::string & /*code*/) {}
 
   virtual void disconnect() = 0;
   virtual void reset_for_reconnect() = 0;

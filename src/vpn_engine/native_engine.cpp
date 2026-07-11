@@ -58,8 +58,25 @@ nlohmann::json status_to_json(const VpnEngineStatus &status) {
                         {"pid", status.pid},
                         {"interface", status.interface_name},
                         {"internal_ip", status.internal_ip},
+                        {"dtls_mode", status.dtls_mode},
+                        {"active_data_channel", status.active_data_channel},
+                        {"dtls_state", status.dtls_state},
+                        {"dtls_fallback_reason",
+                         status.dtls_fallback_reason},
+                        {"dtls_fallback_count", status.dtls_fallback_count},
                         {"error_code", status.error_code},
                         {"error_message", status.error_message}};
+}
+
+void apply_tunnel_metadata_to_status(VpnEngineStatus *status,
+                                     const TunnelMetadata &metadata) {
+  if (!status)
+    return;
+  status->dtls_mode = metadata.dtls_mode;
+  status->active_data_channel = metadata.active_data_channel;
+  status->dtls_state = metadata.dtls_state;
+  status->dtls_fallback_reason = metadata.dtls_fallback_reason;
+  status->dtls_fallback_count = metadata.dtls_fallback_count;
 }
 
 class NativeVpnEngineSession::LoopEventSink final : public EventSink {
@@ -163,6 +180,7 @@ ValidationResult NativeVpnEngineSession::start_handshake(TunnelMetadata *metadat
     status_.pid = -1;
     status_.interface_name = handshake_metadata_.interface_name;
     status_.internal_ip = handshake_metadata_.internal_ip4_address;
+    apply_tunnel_metadata_to_status(&status_, handshake_metadata_);
     status_.error_code.clear();
     status_.error_message.clear();
     transport_ = std::move(handshake.transport);
@@ -210,6 +228,7 @@ ValidationResult NativeVpnEngineSession::adopt_handshake(
     status_.pid = -1;
     status_.interface_name = handshake_metadata_.interface_name;
     status_.internal_ip = handshake_metadata_.internal_ip4_address;
+    apply_tunnel_metadata_to_status(&status_, handshake_metadata_);
     status_.error_code.clear();
     status_.error_message.clear();
     transport_ = std::move(handshake.transport);
@@ -353,20 +372,31 @@ void NativeVpnEngineSession::emit_event(
 }
 
 void NativeVpnEngineSession::on_loop_event(const VpnEngineEvent &event) {
-  if (event.type != "packet.loop.started")
-    return;
-
+  bool notify_startup = false;
   {
     const std::lock_guard<std::mutex> lock(mu_);
-    status_.running = true;
-    status_.network_ready = true;
-    status_.pid = -1;
-    status_.error_code.clear();
-    status_.error_message.clear();
-    loop_started_ = true;
-    loop_start_result_ = ValidationResult{};
+    if (event.type == "packet.loop.started") {
+      status_.running = true;
+      status_.network_ready = true;
+      status_.pid = -1;
+      status_.error_code.clear();
+      status_.error_message.clear();
+      loop_started_ = true;
+      loop_start_result_ = ValidationResult{};
+      notify_startup = true;
+    } else if (event.type == "dtls.fallback") {
+      status_.active_data_channel = "cstp_tls";
+      status_.dtls_state = "attempted_and_fell_back_to_tls";
+      const auto code = event.fields.find("code");
+      status_.dtls_fallback_reason =
+          code == event.fields.end() ? "dtls_runtime_failure" : code->second;
+      ++status_.dtls_fallback_count;
+    } else {
+      return;
+    }
   }
-  startup_cv_.notify_all();
+  if (notify_startup)
+    startup_cv_.notify_all();
 }
 
 void NativeVpnEngineSession::run_packet_loop() {

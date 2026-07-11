@@ -100,6 +100,7 @@ bool set_value(Config &cfg, const std::string &key, const std::string &inline_va
   if (key == "disable_dtls") {
     std::string input = read_value("  Disable DTLS? [y/N]: ");
     cfg.disable_dtls = (!input.empty() && (input[0] == 'y' || input[0] == 'Y'));
+    cfg.dtls_mode = cfg.disable_dtls ? "disabled" : "auto";
     if (save(cfg)) {
       cli::print_success(std::string("disable_dtls = ") +
                            (cfg.disable_dtls ? "true" : "false"));
@@ -160,6 +161,14 @@ bool set_value(Config &cfg, const std::string &key, const std::string &inline_va
     return true;
   if (handle_bool("auto_connect_on_launch", cfg.auto_connect_on_launch,
                   "  Connect automatically when EXV starts? [y/N]: ",
+                  false))
+    return true;
+  if (handle_bool("silent_startup", cfg.silent_startup,
+                  "  Start EXV hidden on first launch? [y/N]: ", false))
+    return true;
+  if (handle_bool("connection_state_notifications",
+                  cfg.connection_state_notifications,
+                  "  Show system notifications on connect/disconnect? [y/N]: ",
                   false))
     return true;
 
@@ -233,15 +242,37 @@ bool set_value(Config &cfg, const std::string &key, const std::string &inline_va
     return false;
   }
 
+  if (key == "retry_limit") {
+    std::string val = read_value("  Enter value for retry_limit (0 = unlimited): ");
+    int retry_limit = 0;
+    try {
+      retry_limit = std::stoi(val);
+    } catch (...) {
+      cli::print_error("Invalid retry_limit.");
+      return false;
+    }
+    if (retry_limit < 0) {
+      cli::print_error("retry_limit must be 0 or a positive integer.");
+      return false;
+    }
+    cfg.retry_limit = retry_limit;
+    if (save(cfg)) {
+      cli::print_success("Set retry_limit = " + val);
+      return true;
+    }
+    return false;
+  }
+
   cli::print_error("Unknown config key: " + key);
   cli::print_info("Valid keys: server, username, password, mtu, useragent, "
-                    "log_file, remember_password, disable_dtls, "
+                    "retry_limit, log_file, remember_password, disable_dtls, "
                     "auto_reconnect, minimal_mode, "
                     "service_install_prompt_seen, "
                     "minimal_install_service_before_connect, "
                     "include_class_a_private_routes, "
                     "include_class_b_private_routes, "
                     "launch_at_login, auto_connect_on_launch, "
+                    "silent_startup, connection_state_notifications, "
                     "vpn_engine, "
                     "windows_tunnel_driver, windows_tap_interface");
   return false;

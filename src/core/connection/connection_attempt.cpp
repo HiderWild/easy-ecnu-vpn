@@ -156,8 +156,16 @@ ProcessLiveness default_process_liveness(int pid) {
   // creation time with owner_pid when the platform seam is widened.
   HANDLE process = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE,
                                static_cast<DWORD>(pid));
-  if (!process)
+  if (!process) {
+    const DWORD error = GetLastError();
+    // ERROR_INVALID_PARAMETER is Windows' "no such process" signal here.
+    // ACCESS_DENIED means a protected process may exist, so keep the guard.
+    if (error == ERROR_INVALID_PARAMETER)
+      return ProcessLiveness::dead;
+    if (error == ERROR_ACCESS_DENIED)
+      return ProcessLiveness::alive;
     return ProcessLiveness::unknown;
+  }
 
   DWORD exit_code = 0;
   const BOOL ok = GetExitCodeProcess(process, &exit_code);
