@@ -1,0 +1,195 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/exv/common-first-provisional-lane-record.schema.json",
+  "$comment": "仅供历史展示；不参与当前宿主开发或验收判定。allowed_path_prefixes 和 allowed_paths 字段不授权也不禁止当前宿主直接修补 Common。",
+  "title": "Common-first provisional platform lane record",
+  "description": "历史 provisional lane record 的结构读取定义。全文件仅作历史展示；字段间不推导生命周期或交付结论，allowed_path_prefixes 和 allowed_paths 只保留旧记录形状，不授权也不禁止当前宿主直接修补 Common。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirement_id",
+    "platform",
+    "candidate_common_commit",
+    "candidate_non_evidence_tree_digest",
+    "planned_manifest_path",
+    "provisional_branch",
+    "status",
+    "delivery_verdict",
+    "allowed_path_prefixes",
+    "unfinished_subrequirements",
+    "blockers",
+    "expires_on_manifest_creation"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
+    },
+    "requirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "candidate_common_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate_non_evidence_tree_digest": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    },
+    "planned_manifest_path": {
+      "$ref": "#/$defs/manifest_path"
+    },
+    "provisional_branch": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "status": {
+      "enum": [
+        "in_progress",
+        "blocked_by_prerequisite",
+        "ready_for_rebase"
+      ]
+    },
+    "delivery_verdict": {
+      "enum": [
+        "not_deliverable",
+        "pending_evidence",
+        "deliverable"
+      ]
+    },
+    "allowed_paths": {
+      "description": "历史展示字段。条目只保留非空 template_id、对象形状和仓库相对文件路径语法；不授权也不禁止当前宿主修补。",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "template_id",
+          "path"
+        ],
+        "properties": {
+          "template_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "path": {
+            "$ref": "#/$defs/repository_file_path"
+          }
+        }
+      }
+    },
+    "allowed_path_prefixes": {
+      "description": "历史展示字段。条目只保留非空 template_id、对象形状和仓库相对目录前缀语法；不授权也不禁止当前宿主修补。",
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "template_id",
+          "prefix"
+        ],
+        "properties": {
+          "template_id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "prefix": {
+            "$ref": "#/$defs/path_prefix"
+          }
+        }
+      }
+    },
+    "unfinished_subrequirements": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+      }
+    },
+    "expires_on_manifest_creation": {
+      "type": "boolean"
+    }
+  },
+  "$defs": {
+    "repository_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!.*[\\r\\n])(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/[A-Za-z0-9._][A-Za-z0-9._-]*)*/?$"
+    },
+    "repository_file_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "[^/]$"
+        }
+      ]
+    },
+    "manifest_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_file_path"
+        },
+        {
+          "pattern": "^docs/superpowers/requirements/[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?/common-first-manifest\\.json$"
+        }
+      ]
+    },
+    "path_prefix": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "/$"
+        }
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "allowed_paths"
+          ]
+        }
+      },
+      "else": {
+        "required": [
+          "allowed_paths"
+        ]
+      }
+    }
+  ]
+}

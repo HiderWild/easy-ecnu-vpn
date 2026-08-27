@@ -1,0 +1,73 @@
+// EXV_CUTOVER (2026-08-17): Rust is the active product line; C++ is deprecated, reference only.
+// Spec: docs/superpowers/specs/vpn-rust-native-runtime-mvp-common-architecture.md
+// section 9.3 (PacketRelay); cutover record: docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md; re-wiring requires a new cutover requirement and a rerun of the real business flow on the native host - satisfied by the 2026-08-17 cutover.
+//
+// This file is the canonical shared wire authority for the packet data plane
+// of the exv.vpn.v1 namespace. Service meaning is declarative: it binds the
+// packet capability to a packet lease, opaque platform ownership, a direction,
+// a monotonic sequence, packet count and total bytes. Control and packet
+// traffic MUST use independent HTTP/2 connections and independent resource
+// budgets; whether they are registered on separate listeners/paths is a
+// platform security/performance decision. The packet capability is consumed
+// atomically a single time by the resource owner.
+//
+// Field tags are permanently assigned and never reused. Reserved ranges:
+//   reserved 9000 to 9999  : internal / future use, never shipped
+//   reserved 1000 to 1999  : burn-in guard for each message
+// A tag that is vacated is recorded as a reserved range in this file before
+// any reuse is ever permitted; reuse is forbidden by policy.
+//
+// Security invariants carried by these types:
+//   * identitys and digests are opaque bytes whose exact length is enforced by
+//     the strict converter (16 bytes for UUID-backed ids, 32 bytes for digests).
+//   * No field self-reports platform identity; identity is derived exclusively
+//     from verified transport metadata, never from a client field.
+//   * Secrets travel only as one-shot bytes and are never persisted, logged,
+//     or replayed; only digests are retained for correlation.
+
+syntax = "proto3";
+
+package exv.vpn.v1;
+
+import "exv/v1/common.proto";
+
+// Direction of a packet batch relative to the tunneled peer.
+// UNSPECIFIED is rejected by the strict converter.
+enum PacketDirection {
+  PACKET_DIRECTION_UNSPECIFIED = 0;
+  PACKET_DIRECTION_INBOUND = 1;
+  PACKET_DIRECTION_OUTBOUND = 2;
+}
+
+// A single opaque packet carried in a batch. The payload is opaque bytes; the
+// strict converter enforces exact length bounds before the payload reaches the
+// domain. No platform identity is self-reported.
+message Packet {
+  bytes payload = 1;          // opaque packet bytes
+  uint32 length = 2;          // payload length in bytes
+  uint64 monotonic_sequence = 3;  // per-direction monotonic sequence
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain PacketBatch. Binds the packet capability to a packet lease,
+// opaque platform ownership, a direction, a monotonic sequence, packet count
+// and total bytes. Carried over the dedicated packet data-plane connection.
+message PacketBatch {
+  PacketLeaseRef packet_lease = 1;      // opaque packet lease ref
+  PlatformOwnershipRef platform_ownership = 2;  // opaque platform ownership
+  PacketDirection direction = 3;
+  uint64 monotonic_sequence = 4;        // batch-level monotonic sequence
+  uint32 packet_count = 5;              // number of packets in this batch
+  uint64 total_bytes = 6;               // sum of payload bytes in this batch
+  repeated Packet packets = 7;          // the packets themselves
+  reserved 9000 to 9999;
+}
+
+// The packet data-plane service. Scripted bidirectional relay of packet
+// batches. Control and packet RPCs MUST use independent HTTP/2 connections.
+// The packet capability is consumed atomically once by the resource owner.
+service PacketRelay {
+  // Bidirectional stream: inbound and outbound packet batches share the same
+  // relay stream, tagged by direction on each batch.
+  rpc Relay(stream PacketBatch) returns (stream PacketBatch);
+}

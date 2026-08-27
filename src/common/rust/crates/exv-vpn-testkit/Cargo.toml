@@ -1,0 +1,31 @@
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
+
+[package]
+name = "exv-vpn-testkit"
+version = "0.1.0"
+publish = false
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+exv-vpn-cstp = { path = "../exv-vpn-cstp" }
+exv-vpn-data-plane = { path = "../exv-vpn-data-plane" }
+exv-vpn-domain = { path = "../exv-vpn-domain" }
+exv-vpn-host = { path = "../exv-vpn-host" }
+exv-vpn-resource = { path = "../exv-vpn-resource" }
+bytes.workspace = true
+rustls.workspace = true
+tokio.workspace = true
+tokio-rustls.workspace = true
+uuid.workspace = true
+
+[dev-dependencies]
+proptest.workspace = true
+
+[lints]
+workspace = true
+
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。

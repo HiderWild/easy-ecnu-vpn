@@ -1,0 +1,249 @@
+// EXV_CUTOVER (2026-08-17): Rust is the active product line; C++ is deprecated, reference only.
+// Spec: docs/superpowers/specs/vpn-rust-native-runtime-mvp-common-architecture.md
+// section 9.1 (KernelControl); cutover record: docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md; re-wiring requires a new cutover requirement and a rerun of the real business flow on the native host - satisfied by the 2026-08-17 cutover.
+//
+// EXV_FROZEN_WIRE (2026-08-18): the kernel_control / common runtime-snapshot domain
+// (RuntimeSnapshot / RuntimeEvent in common.proto, consumed via KernelControl
+// GetSnapshot / WatchEvents) is UNFROZEN by the R1 unfreeze record
+// (docs/superpowers/evidence/2026-08-18-kernel-control-common-unfreeze.md) for the
+// operation_id correlation fields only:
+//   * RuntimeSnapshot gains `operation_id` (tag 11);
+//   * RuntimeEvent gains `operation_id` (tag 4).
+// Tag discipline is unchanged: reserved 1000-1999 (burn-in guard) and 9000-9999
+// (internal/future) hold; all new tags sit outside those ranges. Any further
+// unfreeze requires a new unfreeze record under the same governance process.
+//
+// EXV_FROZEN_WIRE (2026-08-20): this file is UNFROZEN by the S3 ServiceControl
+// unfreeze record
+// (docs/superpowers/evidence/2026-08-20-kernel-control-frozen-wire-unfreeze-service-control.md)
+// for the service-control domain only:
+//   * service KernelControl gains `rpc ServiceControl`;
+//   * new messages ServiceControlRequest / ServiceControlReply (and the action
+//     sub-messages ServiceStatusQuery/Install/Uninstall/Start/Stop).
+// ConnectRequest also briefly gained `auto_install_service` (tag 3) in that S3
+// unfreeze; it is REMOVED by the R1 removal record
+// (docs/superpowers/evidence/2026-08-20-kernel-control-frozen-wire-unfreeze-remove-auto-install.md)
+// — install/service and connect are independent routes (UI sequences them as two
+// requests), so the auto-install preference and its install-then-connect route are
+// gone. Tag 3 is now reserved (never reused).
+// `ServiceStop` (tag 5 of the ServiceControl action oneof) is likewise REMOVED
+// (2026-08-22) by its own removal record
+// (docs/superpowers/evidence/2026-08-22-kernel-control-frozen-wire-unfreeze-remove-servicestop.md):
+// the UI no longer initiates "stop service" — a stopped service is a recoverable
+// error state and start is the repair. Tag 5 is now reserved (never reused).
+// Tag discipline is unchanged: reserved 1000-1999 (burn-in guard) and 9000-9999
+// (internal/future) hold; all new tags sit outside those ranges. Any further
+// unfreeze requires a new unfreeze record under the same governance process.
+//
+// This file is the canonical wire authority for the KernelControl service in
+// the exv.vpn.v1 namespace. It imports the shared types from common.proto and
+// defines only the request messages and the service; all reply/state/event
+// types (OperationReply, KernelOperationReply, RuntimeSnapshot, RuntimeEvent)
+// live in common.proto.
+//
+// Domain code never exposes generated types directly. The acceptance
+// controller only submits the fields required by the fixed scenario; it must
+// pass transport peer authentication and a test-run bootstrap capability
+// before it may trigger connect/stop/reconcile or submit a secret.
+//
+// Security invariants:
+//   * Secrets travel only as one-shot bytes and are cleared from the generated
+//     message immediately after being moved into a zeroable Rust buffer.
+//   * Snapshots and events never carry passwords, cookies, raw certificates,
+//     native handles, or free-text diagnostic stacks.
+//   * No field self-reports platform identity; peer identity is derived
+//     exclusively from verified transport metadata.
+//   * Stop is the only in-connection business cancellation; RPC future
+//     cancellation is not Stop. Reconcile explicitly retries the current
+//     obligation in FailedDirty/Reconciling.
+//
+// Field tags are permanently assigned and never reused. Reserved ranges:
+//   reserved 9000 to 9999  : internal / future use, never shipped
+//   reserved 1000 to 1999  : burn-in guard for each message
+// A tag that is vacated is recorded as a reserved range in this file before
+// any reuse is ever permitted; reuse is forbidden by policy.
+
+syntax = "proto3";
+
+package exv.vpn.v1;
+
+import "exv/v1/common.proto";
+
+// A connect request. The intent captures the full lookup key, request digest,
+// and connection profile; any secret the scenario requires is carried as
+// one-shot bytes and cleared immediately after it is admitted.
+message ConnectRequest {
+  ConnectIntent intent = 1;
+  bytes secret_payload = 2;  // one-shot bytes, optional
+  // Tag 3 was vacated by the R1 removal of `auto_install_service` (install/service
+  // and connect are independent routes). Recorded as reserved per tag discipline;
+  // never reused. See the R1 removal unfreeze record.
+  reserved 3;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// A response to an interaction prompt. Identifies the prompt by its
+// interaction id and carries the user-provided material as one-shot bytes.
+message InteractionResponse {
+  bytes interaction_id = 1;  // 16 bytes
+  bytes runtime_epoch = 2;   // 16 bytes
+  bytes response_payload = 3;  // one-shot bytes
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// A stop request. Carries the full stop intent (lookup key + request digest).
+message StopRequest {
+  StopIntent intent = 1;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// A reconcile request. Reconcile explicitly retries the current obligation in
+// FailedDirty/Reconciling; it identifies the obligation by its lookup key.
+message ReconcileRequest {
+  OperationLookupKey key = 1;
+  bytes request_digest = 2;  // 32 bytes
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Lookup for KernelControl.GetOperation.
+message GetKernelOperationRequest {
+  OperationLookupKey key = 1;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Request for KernelControl.GetSnapshot.
+message SnapshotRequest {
+  bytes runtime_epoch = 1;  // 16 bytes, optional
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Request for KernelControl.WatchEvents. The client may resume from a
+// monotonic tick; an empty request starts from the current snapshot.
+message WatchEventsRequest {
+  uint64 resume_tick = 1;  // 0 means start from current snapshot
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Kernel lifecycle control service. Maps to Architecture section 9.1.
+// The acceptance controller must authenticate and hold a bootstrap capability
+// before triggering connect/stop/reconcile or submitting a secret.
+service KernelControl {
+// Connect begins a connect attempt.
+rpc Connect(ConnectRequest) returns (OperationReply);
+
+// RespondInteraction answers an awaiting interaction prompt.
+rpc RespondInteraction(InteractionResponse) returns (OperationReply);
+
+// Stop is the only in-connection business cancellation.
+rpc Stop(StopRequest) returns (OperationReply);
+
+// Reconcile explicitly retries the current FailedDirty/Reconciling obligation.
+rpc Reconcile(ReconcileRequest) returns (OperationReply);
+
+// GetOperation returns the current state of a prior operation.
+rpc GetOperation(GetKernelOperationRequest) returns (KernelOperationReply);
+
+// GetSnapshot returns the current runtime snapshot.
+rpc GetSnapshot(SnapshotRequest) returns (RuntimeSnapshot);
+
+// WatchEvents streams runtime snapshots and transitions.
+rpc WatchEvents(WatchEventsRequest) returns (stream RuntimeEvent);
+
+// LogsList returns a page of aggregated log entries (incremental via after_seq;
+// 0 returns the recent tail). Read path, not gate-gated.
+rpc LogsList(LogsListRequest) returns (LogsListReply);
+
+// LogsClear truncates the aggregated log file and resets the cursor.
+rpc LogsClear(LogsClearRequest) returns (LogsClearReply);
+
+// ConfigGet returns the current product configuration (non-secret fields only).
+rpc ConfigGet(ConfigGetRequest) returns (ConfigPayload);
+
+// ConfigSet applies and persists configuration items. Mutates state.
+rpc ConfigSet(ConfigSetRequest) returns (ConfigReply);
+
+// ServiceControl queries and mutates the win32 engine SCM service. The query
+// action is a non-privileged read (SC_MANAGER_CONNECT + QUERY_*); the mutating
+// actions (install/uninstall/start/stop) run as engine subcommands under the
+// existing runas elevation boundary (D4) and are gate-gated (write path).
+rpc ServiceControl(ServiceControlRequest) returns (ServiceControlReply);
+}
+
+// Request for KernelControl.LogsList. `after_seq` = 0 returns the recent tail;
+// otherwise only entries with seq > after_seq. `limit` = 0 means the default;
+// out-of-range is clamped. `filter` optionally matches level|message substring.
+message LogsListRequest {
+  uint64 after_seq = 1;
+  uint32 limit = 2;
+  string filter = 3;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Request for KernelControl.LogsClear.
+message LogsClearRequest {
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Request for KernelControl.ConfigGet.
+message ConfigGetRequest {
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Request for KernelControl.ConfigSet. Only non-secret keys are accepted.
+message ConfigSetRequest {
+  repeated ConfigItem items = 1;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Service control (KernelControl.ServiceControl; S3/D5)
+// ---------------------------------------------------------------------------
+
+// Request for KernelControl.ServiceControl. Exactly one action.
+message ServiceControlRequest {
+  oneof action {
+    ServiceStatusQuery query = 1;     // read: current SCM service status (non-privileged)
+    ServiceInstall install = 2;       // install/fix the engine SCM service (elevated)
+    ServiceUninstall uninstall = 3;   // uninstall the engine SCM service (elevated)
+    ServiceStart start = 4;           // start the engine SCM service (elevated)
+    // ServiceStop (tag 5) removed 2026-08-22: the UI no longer initiates a stop;
+    // a stopped service is a recoverable error state (start is the repair).
+  }
+  reserved 5;  // ServiceStop (removed 2026-08-22; S3 service-control unfreeze record 2026-08-20)
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Query the current SCM service status (no fields).
+message ServiceStatusQuery {}
+
+// Install (or fix) the engine SCM service. A reinstall rotates the PSK (M14).
+message ServiceInstall {}
+
+// Uninstall the engine SCM service.
+message ServiceUninstall {}
+
+// Start the engine SCM service.
+message ServiceStart {}
+
+// Reply to KernelControl.ServiceControl. `service_status` is the post-action
+// status (or the current status on query); `ok` reflects the action result and
+// `message` carries a human-readable result/detail (no secrets, no stacks).
+message ServiceControlReply {
+  ServiceStatus service_status = 1;  // current status after the action (or on query)
+  bool ok = 2;
+  string message = 3;                // human-readable result/detail (no secrets)
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}

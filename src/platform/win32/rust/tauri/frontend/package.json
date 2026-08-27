@@ -1,0 +1,32 @@
+{
+  "name": "exv-tauri-frontend",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "scripts": {
+    "dev": "vite",
+    "build": "vue-tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test:unit": "vitest run",
+    "check:logo": "node scripts/check-product-logo.mjs",
+    "verify:product-ui": "npm run test:unit && npm run check:logo && npm run build"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2",
+    "vue": "^3.5"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "^2",
+    "@types/node": "^22",
+    "@vitejs/plugin-vue": "^5",
+    "@vue/test-utils": "2.4.11",
+    "happy-dom": "20.11.2",
+    "typescript": "^5.6",
+    "vite": "6.4.3",
+    "vitest": "3.2.6",
+    "vue-tsc": "^2.1"
+  }
+}

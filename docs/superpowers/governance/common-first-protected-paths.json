@@ -1,0 +1,52 @@
+{
+  "policy_version": "2.0",
+  "manifest_schema_path": "docs/superpowers/governance/common-first-requirement-manifest.schema.json",
+  "description": "业务流优先的宿主修补政策：宿主在真实业务流发现缺陷时可直接修补 Common 业务代码、中央构建、共享契约和共享测试。只有治理规则与证据权威路径保持保护，防止通过改写规则或证据伪造通过。",
+  "protected_path_classes": [
+    {
+      "id": "governance_and_evidence_authority",
+      "description": "治理规则、验收验证器、治理测试与证据权威路径不可被平台业务修补冒充；.github/workflows/ 继续绝对禁止，因为本仓库不使用 GitHub Actions。",
+      "exact_paths": [
+        "AGENTS.md",
+        "docs/architecture/guardrail_allowlist.yml",
+        "scripts/architecture-guardrails.ps1",
+        "scripts/architecture-guardrails.sh",
+        "scripts/common_acceptance_policy.py",
+        "scripts/common_first_governance_contracts.py",
+        "scripts/requirement_host_acceptance.py",
+        "scripts/run_common_executed_receipts.py",
+        "scripts/run_common_native_acceptance.py",
+        "scripts/validate-common-first-governance.py",
+        "scripts/validate-common-first-governance-ci.py",
+        "scripts/validate-common-runtime-decoupling.py",
+        "scripts/validate-requirement-host-acceptance.py"
+      ],
+      "prefixes": [
+        ".github/workflows/",
+        "docs/superpowers/evidence/",
+        "docs/superpowers/governance/",
+        "docs/superpowers/requirements/",
+        "docs/superpowers/templates/",
+        "tests/governance/"
+      ]
+    }
+  ],
+  "host_repair_policy": {
+    "description": "宿主对当前真实业务流观察到的缺陷可直接修补 Common 业务代码、中央构建、共享契约和共享测试；记录观察事实、当前修补、当前活动接线和非约束建议即可。",
+    "predeclared_allowlist_required": false,
+    "integration_recommendation_binding": false,
+    "business_repairable_examples": [
+      "src/common/",
+      "CMakeLists.txt",
+      "contracts/",
+      "tests/common/"
+    ],
+    "governance_authority_remains_protected": true
+  },
+  "platform_allowed_prefix_policy": {
+    "mode": "historical_display",
+    "manifest_field": "platform_lanes[].allowed_path_prefixes[].{template_id,prefix}",
+    "provisional_record_field": "allowed_path_prefixes[].{template_id,prefix}",
+    "rule": "旧 allowed_path_prefixes/allowed_paths 字段仅用于读取历史记录。它们既不授权也不禁止当前宿主的业务修补；兼容校验只检查 JSON 结构和仓库相对路径语法。"
+  }
+}

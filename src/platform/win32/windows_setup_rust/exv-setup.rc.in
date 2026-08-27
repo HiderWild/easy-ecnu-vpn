@@ -1,0 +1,9 @@
+#include "resource.hpp"
+
+// Rust setup resource definition: asset paths are baked as
+// absolute paths by CMake configure_file so windres resolves them regardless of CWD.
+IDI_EXV_SETUP ICON "@EXV_ICON_ICO@"
+IDR_EXV_ICON_PNG RCDATA "@EXV_ICON_256@"
+
+// Application manifest: per-monitor DPI awareness (prevents blurry OS bitmap scaling).
+1 24 "exv-setup.manifest"

@@ -1,0 +1,364 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "platform-lane-record.schema.json",
+  "$comment": "仅供历史展示；不参与当前宿主开发或验收判定。",
+  "title": "Platform lane record",
+  "description": "历史 platform lane record 的结构读取定义。字段只用于展示旧记录，不能决定当前宿主的业务修补、验收或未来 Common 归属。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirement_id",
+    "platform",
+    "lane_branch",
+    "accepted_common_implementation_commit",
+    "common_baseline_record_commit",
+    "lane_status",
+    "delivery_verdict",
+    "unfinished_subrequirements",
+    "blockers",
+    "production_verifications",
+    "skip_mock_items"
+  ],
+  "properties": {
+    "$comment": {
+      "type": "string",
+      "$comment": "可选的历史显示元数据；仅为兼容读取允许，不参与任何交付、状态、授权、路径或宿主通过判定。"
+    },
+    "schema_version": {
+      "const": "1.0"
+    },
+    "requirement_id": {
+      "$ref": "#/$defs/requirement_id"
+    },
+    "platform": {
+      "$ref": "#/$defs/platform"
+    },
+    "lane_branch": {
+      "$ref": "#/$defs/lane_branch"
+    },
+    "accepted_common_implementation_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "common_baseline_record_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "lane_status": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/active_lane_status"
+        },
+        {
+          "$ref": "#/$defs/legacy_display_only_lane_status"
+        }
+      ]
+    },
+    "delivery_verdict": {
+      "enum": [
+        "not_deliverable",
+        "pending_evidence",
+        "deliverable"
+      ]
+    },
+    "unfinished_subrequirements": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/unfinished_subrequirement"
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "$ref": "#/$defs/blocker"
+          },
+          {
+            "$ref": "#/$defs/legacy_display_only_common_blocker"
+          }
+        ]
+      }
+    },
+    "production_verifications": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/production_verification"
+      }
+    },
+    "skip_mock_items": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/skip_mock_item"
+      }
+    }
+  },
+  "$defs": {
+    "requirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "platform": {
+      "type": "string",
+      "pattern": "^[a-z][a-z0-9-]*$"
+    },
+    "lane_branch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "active_lane_status": {
+      "enum": [
+        "not_started",
+        "in_progress",
+        "blocked_external",
+        "ready_for_review",
+        "delivered"
+      ]
+    },
+    "legacy_display_only_lane_status": {
+      "$comment": "DEPRECATED; NON-AUTHORITATIVE. 仅用于读取历史记录，不参与当前 verdict 推导。",
+      "const": "blocked_by_common"
+    },
+    "repository_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!.*[\\r\\n])(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/[A-Za-z0-9._][A-Za-z0-9._-]*)*/?$"
+    },
+    "repository_file_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "[^/]$"
+        }
+      ]
+    },
+    "work_item_id": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$"
+    },
+    "production_verification_id": {
+      "type": "string",
+      "pattern": "^PV-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+    },
+    "unfinished_subrequirement": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "state"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/work_item_id"
+        },
+        "state": {
+          "enum": [
+            "open",
+            "blocked",
+            "resolved"
+          ]
+        }
+      }
+    },
+    "blocker": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "affected_subrequirement_ids",
+        "evidence_paths"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/work_item_id"
+        },
+        "kind": {
+          "enum": [
+            "external",
+            "environment",
+            "decision"
+          ]
+        },
+        "affected_subrequirement_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/work_item_id"
+          }
+        },
+        "evidence_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repository_file_path"
+          }
+        }
+      }
+    },
+    "legacy_display_only_common_blocker": {
+      "$comment": "DEPRECATED; NON-AUTHORITATIVE. 仅保留历史 common blocker 的只读结构，不产生当前阻塞或归属权威。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "affected_subrequirement_ids",
+        "evidence_paths",
+        "common_change_requirement_id"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/work_item_id"
+        },
+        "kind": {
+          "const": "common"
+        },
+        "affected_subrequirement_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/work_item_id"
+          }
+        },
+        "evidence_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repository_file_path"
+          }
+        },
+        "common_change_requirement_id": {
+          "$ref": "#/$defs/requirement_id"
+        }
+      }
+    },
+    "production_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "path"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "real_machine",
+            "native_system",
+            "platform_test",
+            "integration_test",
+            "mock"
+          ]
+        },
+        "path": {
+          "$ref": "#/$defs/repository_file_path"
+        }
+      }
+    },
+    "production_verification": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "status",
+        "evidence"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/production_verification_id"
+        },
+        "status": {
+          "enum": [
+            "not_run",
+            "passed",
+            "failed",
+            "blocked",
+            "skipped_mock"
+          ]
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/production_evidence"
+          }
+        }
+      }
+    },
+    "skip_mock_item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "affected_production_verification_ids",
+        "evidence_paths"
+      ],
+      "properties": {
+        "id": {
+          "$ref": "#/$defs/work_item_id"
+        },
+        "affected_production_verification_ids": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/production_verification_id"
+          }
+        },
+        "evidence_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "$ref": "#/$defs/repository_file_path"
+          }
+        }
+      }
+    }
+  },
+  "oneOf": [
+    {
+      "title": "Current non-legacy historical display shape",
+      "properties": {
+        "lane_status": {
+          "$ref": "#/$defs/active_lane_status"
+        },
+        "blockers": {
+          "items": {
+            "$ref": "#/$defs/blocker"
+          }
+        }
+      }
+    },
+    {
+      "title": "Deprecated legacy display-only lane shape",
+      "deprecated": true,
+      "$comment": "DEPRECATED; NON-AUTHORITATIVE. 此 oneOf 分支只读取历史 blocked/common 字段，不参与当前交付 verdict 或未来 Common 归属判断。",
+      "properties": {
+        "lane_status": {
+          "$ref": "#/$defs/legacy_display_only_lane_status"
+        },
+        "blockers": {
+          "items": {
+            "oneOf": [
+              {
+                "$ref": "#/$defs/blocker"
+              },
+              {
+                "$ref": "#/$defs/legacy_display_only_common_blocker"
+              }
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

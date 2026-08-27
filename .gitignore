@@ -1,0 +1,68 @@
+# Build
+.worktrees/
+build/
+build-*/
+/target/
+!webui/build-resources/
+cmake-build-*/
+dbg/
+*.o
+*.d
+*.a
+/*.lib
+/*.dll
+/*.dylib
+/*.so
+/*.so.*
+/exv
+Testing/
+
+# Generated files
+src/webui_assets.hpp
+
+# IDE / editor
+.cache/
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Dependencies
+node_modules/
+.pnpm-store/
+package-lock.json
+webui/dist-electron/
+webui/native/bin/
+webui/release/
+reference/
+/runtime/
+
+# Agent/tool workspaces
+.omc/
+.claude/
+.codex/
+.reasonix/
+.superpowers/
+codex/
+reasonix/
+claude/
+
+# Sync conflict artifacts
+*sync-conflict*
+
+# Screenshots / dev artifacts
+webui/electron-shot*.png
+
+# Legacy
+bash/
+cminst.sh
+walkthrough.md
+
+# Python bytecode cache
+__pycache__/
+*.pyc
+.codegraph/

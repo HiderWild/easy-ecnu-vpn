@@ -1,0 +1,29 @@
+{
+  "schema_version": "1.0",
+  "requirement_id": "vpn-common-first-provisional-lane-attestation-binding",
+  "candidate_common_commit": "1111111111111111111111111111111111111111",
+  "candidate_non_evidence_tree_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "common_only_profile_digest": "sha256:3333333333333333333333333333333333333333333333333333333333333333",
+  "gate_set_digest": "sha256:4444444444444444444444444444444444444444444444444444444444444444",
+  "environment_policy_digest": "sha256:5555555555555555555555555555555555555555555555555555555555555555",
+  "runtime_identity": {
+    "model_digest": "sha256:6666666666666666666666666666666666666666666666666666666666666666",
+    "model_schema_version": "3.0",
+    "provider_contract_digest": "sha256:7777777777777777777777777777777777777777777777777777777777777777",
+    "system_contract_digest": "sha256:8888888888888888888888888888888888888888888888888888888888888888"
+  },
+  "host_attestations": [
+    {
+      "host": "darwin",
+      "evidence_kind": "real_machine",
+      "path": "docs/superpowers/evidence/common-native-acceptance/vpn-common-first-provisional-lane-attestation-binding/darwin.json",
+      "sha256": "sha256:9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    {
+      "host": "win32",
+      "evidence_kind": "real_machine",
+      "path": "docs/superpowers/evidence/common-native-acceptance/vpn-common-first-provisional-lane-attestation-binding/win32.json",
+      "sha256": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    }
+  ]
+}

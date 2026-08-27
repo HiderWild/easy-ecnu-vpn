@@ -1,0 +1,58 @@
+{
+  "schema_version": "1.0",
+  "requirement_id": "vpn-common-first-provisional-lane-attestation-binding",
+  "authorized_branch": "codex/req-vpn-common-first-provisional-lane-attestation-binding-common-repair",
+  "authorized_base_commit": "e27d6e20b086c724c1d76e7784b8498f9c0ef795",
+  "reason_code": "target_gate_bootstrap",
+  "legacy_gate_expected_failures": [
+    "GOV_CI_UNMANAGED_PROTECTED_CHANGE"
+  ],
+  "allowed_paths": [
+    "docs/superpowers/governance/README.md",
+    "docs/superpowers/governance/bootstrap-exemptions/vpn-common-first-provisional-lane-attestation-binding.json",
+    "docs/superpowers/governance/common-first-bootstrap-exemption.schema.json",
+    "docs/superpowers/governance/common-first-protected-paths.json",
+    "docs/superpowers/governance/common-first-provisional-lane-record.schema.json",
+    "docs/superpowers/governance/common-first-requirement-manifest.schema.json",
+    "docs/superpowers/governance/common-native-acceptance-bundle.schema.json",
+    "docs/superpowers/governance/common-native-acceptance-policy.json",
+    "docs/superpowers/governance/platform-acceptance-campaign.md",
+    "docs/superpowers/plans/2026-08-02-common-first-provisional-lane-attestation-binding.md",
+    "docs/superpowers/specs/2026-08-02-common-first-provisional-lane-attestation-binding-design.md",
+    "docs/superpowers/specs/vpn-common-first-provisional-lane-attestation-binding-common-architecture.md",
+    "docs/superpowers/specs/vpn-common-first-provisional-lane-attestation-binding.md",
+    "scripts/common_acceptance_policy.py",
+    "scripts/common_first_governance_contracts.py",
+    "scripts/run_common_native_acceptance.py",
+    "scripts/validate-common-first-governance-ci.py",
+    "scripts/validate-common-first-governance.py",
+    "tests/governance/fixtures/common-first-provisional-lane-seed.json",
+    "tests/governance/fixtures/common-native-acceptance-bundle-seed.json",
+    "tests/governance/test_common_acceptance_policy.py",
+    "tests/governance/test_run_common_native_acceptance.py",
+    "tests/governance/test_validate_common_first_governance.py"
+  ],
+  "allowed_path_prefixes": [],
+  "target_gate_commands": [
+    [
+      "python",
+      "-m",
+      "unittest",
+      "tests.governance.test_validate_common_first_governance",
+      "-v"
+    ],
+    [
+      "python",
+      "scripts/validate-common-first-governance-ci.py",
+      "--base",
+      "e27d6e20b086c724c1d76e7784b8498f9c0ef795",
+      "--head",
+      "HEAD",
+      "--format",
+      "json"
+    ]
+  ],
+  "state": "consumed",
+  "prohibits_delivery": true,
+  "consumed_implementation_commit": "ec75186cc63acf6080d00c536fe857aee4167219"
+}

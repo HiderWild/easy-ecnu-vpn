@@ -1,0 +1,885 @@
+// EXV_CUTOVER (2026-08-17): Rust is the active product line; C++ is deprecated, reference only.
+// Cutover record: docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md; re-wiring requires a new cutover requirement and a rerun of the real business flow on the native host - satisfied by the 2026-08-17 cutover.
+//
+// This file is the canonical shared wire authority for the exv.vpn.v1 namespace.
+// It mirrors the exv-vpn-domain types in
+//   src/common/rust/crates/exv-vpn-domain/src/{identity,error,model,ports}.rs
+// Domain code never exposes generated types directly; the strict converter
+// enforces exact byte lengths for every identity/digest field and rejects any
+// enum that decodes to its UNSPECIFIED=0 sentinel.
+//
+// Field tags are permanently assigned and never reused. Reserved ranges:
+//   reserved 9000 to 9999  : internal / future use, never shipped
+//   reserved 1000 to 1999  : burn-in guard for each message
+// A tag that is vacated is recorded as a reserved range in this file before
+// any reuse is ever permitted; reuse is forbidden by policy.
+//
+// EXV_FROZEN_WIRE (2026-08-20): the RuntimeSnapshot service/mode domain is
+// UNFROZEN by the S3 common runtime-snapshot unfreeze record
+// (docs/superpowers/evidence/2026-08-20-common-runtime-snapshot-unfreeze-service-mode.md)
+// for the service-awareness fields only:
+//   * new message ServiceStatus;
+//   * RuntimeSnapshot gains `service_status` (tag 12) and `mode` (tag 13).
+// R3 then UNFROZEN ServiceStatus.health_state (tag 4) under
+// (docs/superpowers/evidence/2026-08-20-common-runtime-snapshot-unfreeze-health-state.md):
+//   * ServiceStatus gains `health_state` (tag 4), the unified service health
+//     enum ("healthy" | "scm_orphan" | "installed_unavailable" |
+//     "payload_orphan" | "not_installed") from the R3 unified health model.
+// Tag discipline is unchanged: reserved 1000-1999 (burn-in guard) and 9000-9999
+// (internal/future) hold; all new tags sit outside those ranges. Any further
+// unfreeze requires a new unfreeze record under the same governance process.
+//
+// EXV_UNFREEZE 2026-08-24: system proxy awareness, see
+// docs/superpowers/evidence/2026-08-24-system-proxy-wire-unfreeze.md
+// (design: docs/superpowers/plans/2026-08-24-system-proxy-awareness-design.md
+// §5.4/§5.5) for the following fields only:
+//   * new message SystemProxyDetection;
+//   * TunnelPlan gains `proxy_exempt` (tag 8): system-proxy exemption entries,
+//     decoupled from routing; the engine derives desired_bypass_entries from
+//     the plan;
+//   * RuntimeSnapshot gains `system_proxy` (tag 14): detect-and-report status
+//     only, no behavior decision in v1.
+// Tag discipline is unchanged: reserved 1000-1999 (burn-in guard) and 9000-9999
+// (internal/future) hold; all new tags sit outside those ranges.
+//
+// Security invariants carried by these types:
+//   * identitys and digests are opaque bytes whose exact length is enforced by
+//     the strict converter (16 bytes for UUID-backed ids, 32 bytes for digests,
+//     4 bytes for IPv4 addresses).
+//   * ErrorSubject is the single canonical causal attribution for every
+//     cross-process VpnError. It has exactly six branches; a missing/unknown
+//     oneof, an empty or malformed identity, a legacy bare operation id field,
+//     or any extra legacy branch is rejected before it reaches the domain.
+//   * Secrets travel only as one-shot bytes and are never persisted,
+//     logged, or replayed; only digests are retained for correlation.
+//   * No field self-reports platform identity; peer identity is derived
+//     exclusively from verified transport metadata, never from a client field.
+
+syntax = "proto3";
+
+package exv.vpn.v1;
+
+// ---------------------------------------------------------------------------
+// Operation method
+// ---------------------------------------------------------------------------
+
+// Mirrors domain OperationMethod.
+enum OperationMethod {
+  OPERATION_METHOD_UNSPECIFIED = 0;
+  OPERATION_METHOD_CONNECT = 1;
+  OPERATION_METHOD_RESPOND_INTERACTION = 2;
+  OPERATION_METHOD_STOP = 3;
+  OPERATION_METHOD_RECONCILE = 4;
+  OPERATION_METHOD_ACQUIRE_LEASE = 5;
+  OPERATION_METHOD_APPLY_TUNNEL = 6;
+  OPERATION_METHOD_STOP_TUNNEL = 7;
+  OPERATION_METHOD_RELEASE_LEASE = 8;
+}
+
+// ---------------------------------------------------------------------------
+// Typed error model
+// ---------------------------------------------------------------------------
+
+// Mirrors domain ErrorCode. UNSPECIFIED is rejected by the strict converter.
+enum ErrorCode {
+  ERROR_CODE_UNSPECIFIED = 0;
+  ERROR_CODE_INVALID_INPUT = 1;
+  ERROR_CODE_IDEMPOTENCY_CONFLICT = 2;
+  ERROR_CODE_CONNECT_IN_PROGRESS = 3;
+  ERROR_CODE_SESSION_BUSY = 4;
+  ERROR_CODE_RECONNECT_ALREADY_QUEUED = 5;
+  ERROR_CODE_CANCELLED_BEFORE_START = 6;
+  ERROR_CODE_AUTHORITY_ALREADY_HELD = 7;
+  ERROR_CODE_OWNERSHIP_ACQUISITION_PENDING = 8;
+  ERROR_CODE_OBSERVED_CONFLICT = 9;
+  ERROR_CODE_JOURNAL_CORRUPT = 10;
+  ERROR_CODE_DATA_PLANE_BACKPRESSURE = 11;
+  ERROR_CODE_PACKET_LEASE_ALREADY_ATTACHED = 12;
+  ERROR_CODE_EFFECT_UNKNOWN = 13;
+  ERROR_CODE_OBSERVATION_FAILED = 14;
+  ERROR_CODE_UNAUTHORIZED = 15;
+  ERROR_CODE_DEADLINE_EXCEEDED = 16;
+  ERROR_CODE_ACTIVE_ATTEMPT_CANNOT_RECONCILE = 17;
+  ERROR_CODE_ACTIVE_SESSION_CANNOT_RECONCILE = 18;
+}
+
+// Mirrors domain ErrorStage.
+enum ErrorStage {
+  ERROR_STAGE_UNSPECIFIED = 0;
+  ERROR_STAGE_INGRESS = 1;
+  ERROR_STAGE_ADMISSION = 2;
+  ERROR_STAGE_OBSERVING_OWNED_STATE = 3;
+  ERROR_STAGE_ACQUIRING_PLATFORM_LEASE = 4;
+  ERROR_STAGE_CONNECTING_CONTROL = 5;
+  ERROR_STAGE_AWAITING_INTERACTION = 6;
+  ERROR_STAGE_NEGOTIATING_TUNNEL = 7;
+  ERROR_STAGE_APPLYING_PLATFORM_TUNNEL = 8;
+  ERROR_STAGE_ATTACHING_PACKET_BOUNDARY = 9;
+  ERROR_STAGE_STARTING_DATA_PLANE = 10;
+  ERROR_STAGE_PROTOCOL_SESSION = 11;
+  ERROR_STAGE_DATA_PLANE = 12;
+  ERROR_STAGE_TEARDOWN = 13;
+  ERROR_STAGE_RECOVERY = 14;
+  ERROR_STAGE_JOURNAL = 15;
+}
+
+// Mirrors domain EffectCertainty.
+enum EffectCertainty {
+  EFFECT_CERTAINTY_UNSPECIFIED = 0;
+  EFFECT_CERTAINTY_NO_EFFECT = 1;
+  EFFECT_CERTAINTY_APPLIED = 2;
+  EFFECT_CERTAINTY_PARTIAL = 3;
+  EFFECT_CERTAINTY_UNKNOWN = 4;
+}
+
+// Mirrors domain RetryAdvice.
+enum RetryAdvice {
+  RETRY_ADVICE_UNSPECIFIED = 0;
+  RETRY_ADVICE_DO_NOT_RETRY = 1;
+  RETRY_ADVICE_RETRY_SAME_OPERATION = 2;
+  RETRY_ADVICE_USE_NEW_OPERATION = 3;
+  RETRY_ADVICE_RECONCILE = 4;
+  RETRY_ADVICE_RESTART_PROCESS = 5;
+}
+
+// Mirrors domain ResourceKind.
+enum ResourceKind {
+  RESOURCE_KIND_UNSPECIFIED = 0;
+  RESOURCE_KIND_RUNTIME = 1;
+  RESOURCE_KIND_PROTOCOL_SESSION = 2;
+  RESOURCE_KIND_PLATFORM_OWNERSHIP = 3;
+  RESOURCE_KIND_PACKET_DEVICE = 4;
+  RESOURCE_KIND_NETWORK_ADDRESS = 5;
+  RESOURCE_KIND_MTU = 6;
+  RESOURCE_KIND_ROUTE_SET = 7;
+  RESOURCE_KIND_DNS = 8;
+  RESOURCE_KIND_CONTROL_BYPASS = 9;
+  RESOURCE_KIND_NETWORK_SETTINGS = 10;
+  RESOURCE_KIND_PACKET_LEASE = 11;
+  RESOURCE_KIND_JOURNAL = 12;
+  RESOURCE_KIND_CLEANUP_PROOF = 13;
+}
+
+// Mirrors domain NativeErrorCategory.
+enum NativeErrorCategory {
+  NATIVE_ERROR_CATEGORY_UNSPECIFIED = 0;
+  NATIVE_ERROR_CATEGORY_PERMISSION = 1;
+  NATIVE_ERROR_CATEGORY_TRANSPORT = 2;
+  NATIVE_ERROR_CATEGORY_PROTOCOL = 3;
+  NATIVE_ERROR_CATEGORY_RESOURCE = 4;
+  NATIVE_ERROR_CATEGORY_STORAGE = 5;
+  NATIVE_ERROR_CATEGORY_OBSERVATION = 6;
+  NATIVE_ERROR_CATEGORY_UNSUPPORTED = 7;
+  NATIVE_ERROR_CATEGORY_UNKNOWN = 8;
+}
+
+// Mirrors domain NativeErrorNamespace.
+enum NativeErrorNamespace {
+  NATIVE_ERROR_NAMESPACE_UNSPECIFIED = 0;
+  NATIVE_ERROR_NAMESPACE_WIN32 = 1;
+  NATIVE_ERROR_NAMESPACE_HRESULT = 2;
+  NATIVE_ERROR_NAMESPACE_NTSTATUS = 3;
+  NATIVE_ERROR_NAMESPACE_POSIX_ERRNO = 4;
+  NATIVE_ERROR_NAMESPACE_APPLE_OS_STATUS = 5;
+  NATIVE_ERROR_NAMESPACE_APPLE_MACH = 6;
+  NATIVE_ERROR_NAMESPACE_APPLE_NETWORK_EXTENSION = 7;
+  NATIVE_ERROR_NAMESPACE_UNKNOWN = 8;
+}
+
+// Canonical causal attribution of a VpnError. NOT authorization material.
+// Mirrors domain ErrorSubject. Exactly six branches; each carries its full
+// nominal identity. The strict converter rejects a missing/unknown oneof, an
+// empty or malformed identity, a legacy bare operation id field, and any
+// extra legacy branch before the payload reaches the domain.
+message ErrorSubject {
+  oneof subject {
+    OperationLookupKey external = 1;   // full external command key
+    AttemptSubject attempt = 2;        // runtime_epoch + attempt_id
+    EffectSubject effect = 3;          // runtime_epoch + attempt_id + effect_id
+    RetirementSubject retirement = 4;  // retirement_operation_id
+    RecoverySubject recovery = 5;      // recovery_id
+    RuntimeSubject runtime = 6;        // runtime_epoch
+  }
+  reserved 9000 to 9999;
+}
+
+// Identifies a current attempt before RetirementStarted is established.
+message AttemptSubject {
+  bytes runtime_epoch = 1;  // 16 bytes
+  bytes attempt_id = 2;     // 16 bytes
+}
+
+// Identifies an effect that has already been dispatched.
+message EffectSubject {
+  bytes runtime_epoch = 1;  // 16 bytes
+  bytes attempt_id = 2;     // 16 bytes
+  bytes effect_id = 3;      // 16 bytes
+}
+
+// Identifies an established retirement causal chain.
+message RetirementSubject {
+  bytes retirement_operation_id = 1;  // 16 bytes
+}
+
+// Identifies startup recovery (no attempt yet).
+message RecoverySubject {
+  bytes recovery_id = 1;  // 16 bytes
+}
+
+// Identifies a runtime lifecycle identity (no attempt yet).
+message RuntimeSubject {
+  bytes runtime_epoch = 1;  // 16 bytes
+}
+
+// Opaque resource reference used for correlation/audit, never as capability.
+message OpaqueResourceRef {
+  ResourceKind kind = 1;
+  bytes identity_digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+// A redacted native error detail: category/namespace/code only. Free-text
+// diagnostic stacks are never placed on the wire.
+message RedactedNativeError {
+  NativeErrorCategory category = 1;
+  NativeErrorNamespace namespace = 2;
+  sint64 code = 3;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain VpnError. Every cross-process error uses this shape.
+message VpnError {
+  ErrorCode code = 1;
+  ErrorStage stage = 2;
+  EffectCertainty certainty = 3;
+  RetryAdvice retry = 4;
+  ErrorSubject subject = 5;
+  OpaqueResourceRef resource = 6;
+  RedactedNativeError native = 7;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Identitys and digests
+// ---------------------------------------------------------------------------
+
+// Mirrors domain OperationLookupKey. principal_digest and operation fields are
+// opaque, exact-length bytes; method is the only discriminated enum.
+message OperationLookupKey {
+  bytes principal_digest = 1;  // 32 bytes
+  OperationMethod method = 2;
+  bytes runtime_epoch = 3;  // 16 bytes
+  bytes operation_id = 4;   // 16 bytes
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Refs and proofs
+// ---------------------------------------------------------------------------
+
+// Resource identity ref wrapping a single ResourceIdentityDigest.
+message ConnectionProfileRef {
+  bytes identity_digest = 1;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message ProtocolSessionRef {
+  bytes identity_digest = 1;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message PacketLeaseRef {
+  bytes identity_digest = 1;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message TunnelIntentRef {
+  bytes identity_digest = 1;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message PlatformOwnershipRef {
+  bytes identity_digest = 1;  // 32 bytes
+  uint64 ownership_version = 2;
+  bytes token_digest = 3;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message CleanupProofRef {
+  bytes canonical_inventory_digest = 1;  // 32 bytes
+  bytes platform_evidence_digest = 2;    // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message PlatformReadyProof {
+  PlatformOwnershipRef platform_ownership = 1;
+  bytes evidence_digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message DataRunningProof {
+  ProtocolSessionRef protocol_session = 1;
+  PlatformOwnershipRef platform_ownership = 2;
+  PacketLeaseRef packet_lease = 3;
+  bytes evidence_digest = 4;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message VersionedPlatformEvidence {
+  uint32 kind_version = 1;
+  bytes digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain CleanProof: the proof that a prior ownership was fully
+// cleaned up. Digests are exact-length opaque bytes.
+message CleanProof {
+  bytes runtime_epoch = 1;                                    // 16 bytes
+  bytes platform_authority_instance_id = 2;                   // 16 bytes
+  uint64 prior_ownership_version = 3;
+  bytes prior_platform_ownership_token_digest_if_issued = 4;  // 32 bytes, optional
+  bytes retirement_operation_id = 5;                          // 16 bytes
+  bytes cleanup_trigger_digest = 6;                           // 32 bytes
+  bytes external_trigger_operation_identity_digest_if_present = 7;  // 32 bytes, optional
+  bytes canonical_obligation_inventory_digest = 8;            // 32 bytes
+  bytes journal_root_or_projection_digest = 9;                // 32 bytes
+  uint64 journal_revision = 10;
+  VersionedPlatformEvidence platform_evidence = 11;
+  uint32 unresolved_obligation_count = 12;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Tunnel plan
+// ---------------------------------------------------------------------------
+
+// IPv4 route; network is a 4-byte network address.
+message Ipv4Route {
+  bytes network = 1;         // 4 bytes
+  uint32 prefix_len = 2;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain TunnelPlan.
+message TunnelPlan {
+  bytes ipv4_address = 1;      // 4 bytes
+  uint32 ipv4_prefix_len = 2;
+  uint32 mtu = 3;
+  repeated Ipv4Route ipv4_routes = 4;
+  repeated bytes dns_servers = 5;       // each 4 bytes
+  repeated bytes control_bypass = 6;    // each 4 bytes
+  TunnelIntentRef opaque_intent = 7;
+  // EXV_UNFREEZE 2026-08-24: system proxy awareness, see docs/superpowers/evidence/2026-08-24-system-proxy-wire-unfreeze.md
+  // System-proxy exemption entries (IP or CIDR/wildcard strings), decoupled
+  // from routing (`ipv4_routes` / `control_bypass`): an exemption declares
+  // "which targets must not go through the system proxy", it is NOT an L3
+  // route. The engine derives its desired_bypass_entries from this plan field.
+  repeated string proxy_exempt = 8;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Operation reply / state
+// ---------------------------------------------------------------------------
+
+message AuthorityFence {
+  uint64 authority_epoch = 1;
+  bytes platform_authority_instance_id = 2;  // 16 bytes
+  uint64 admission_watermark = 3;
+  uint64 journal_revision = 4;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain JournalOperationIdentity.
+message JournalOperationIdentity {
+  oneof identity {
+    OperationLookupKey external = 1;
+    bytes retirement_operation_id = 2;  // 16 bytes
+  }
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain MutationReceipt.
+message MutationReceipt {
+  JournalOperationIdentity journal_operation_identity = 1;
+  bytes canonical_input_digest = 2;  // 32 bytes
+  bytes effect_id = 3;               // 16 bytes
+  AuthorityFence authority_fence = 4;
+  uint64 ownership_version = 5;
+  EffectCertainty certainty = 6;
+  reserved 9000 to 9999;
+}
+
+// A mutation that was admitted and terminal but failed.
+message OperationFailed {
+  MutationReceipt receipt = 1;
+  VpnError error = 2;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain OperationTerminal.
+message OperationTerminal {
+  oneof result {
+    MutationReceipt succeeded = 1;
+    OperationFailed failed = 2;
+  }
+  reserved 9000 to 9999;
+}
+
+// Generic reply for kernel mutations (Connect/RespondInteraction/Stop/Reconcile).
+message OperationReply {
+  OperationTerminal terminal = 1;
+  reserved 9000 to 9999;
+}
+
+message RejectedNoEffect {
+  VpnError error = 1;
+  AuthorityFence authority_fence = 2;
+  reserved 9000 to 9999;
+}
+
+message AbsentNoEffect {
+  bytes lookup_key_digest = 1;  // 32 bytes
+  uint64 authority_epoch = 2;
+  uint64 admission_watermark = 3;
+  reserved 9000 to 9999;
+}
+
+// Empty marker for Pending/Unknown state branches.
+message EmptyOperationState {}
+
+// Mirrors domain OperationState.
+message OperationState {
+  oneof state {
+    EmptyOperationState pending = 1;
+    OperationTerminal terminal = 2;
+    RejectedNoEffect rejected = 3;
+    AbsentNoEffect absent = 4;
+    EmptyOperationState unknown = 5;
+  }
+  reserved 9000 to 9999;
+}
+
+// Reply for KernelControl.GetOperation.
+message KernelOperationReply {
+  OperationState state = 1;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Runtime snapshot / event
+// ---------------------------------------------------------------------------
+
+// Mirrors domain ConnectPhase.
+enum ConnectPhase {
+  CONNECT_PHASE_UNSPECIFIED = 0;
+  CONNECT_PHASE_OBSERVING_OWNED_STATE = 1;
+  CONNECT_PHASE_ACQUIRING_PLATFORM_LEASE = 2;
+  CONNECT_PHASE_CONNECTING_CONTROL = 3;
+  CONNECT_PHASE_AWAITING_INTERACTION = 4;
+  CONNECT_PHASE_NEGOTIATING_TUNNEL = 5;
+  CONNECT_PHASE_APPLYING_PLATFORM_TUNNEL = 6;
+  CONNECT_PHASE_ATTACHING_PACKET_BOUNDARY = 7;
+  CONNECT_PHASE_STARTING_DATA_PLANE = 8;
+}
+
+// The coarse connection stage of the engine at sample time. Finer connect
+// phases (ConnectPhase) belong to the connect attempt; stats carry this
+// coarse lifecycle stage for the core's status display.
+//
+// Shared by `helper_control.proto` `StatsEvent.phase` (engine → core push) and
+// `RuntimeSnapshot.stats.phase` (core → UI snapshot; stats-wire 方案 A). It is
+// defined here in common.proto because common.proto cannot import
+// helper_control.proto (helper_control imports common). All files share the
+// `exv.vpn.v1` package, so the generated symbol (`StatsPhase`) is unchanged by
+// which file hosts the enum.
+enum StatsPhase {
+  STATS_PHASE_UNSPECIFIED = 0;
+  STATS_PHASE_IDLE = 1;
+  STATS_PHASE_CONNECTING = 2;
+  STATS_PHASE_CONNECTED = 3;
+  STATS_PHASE_STOPPING = 4;
+  STATS_PHASE_FAILED = 5;
+}
+
+// A runtime statistics sample carried by `RuntimeSnapshot` (core → UI;
+// stats-wire 方案 A: `GetSnapshot`/`WatchEvents` carry it alongside state).
+//
+// Mirrors the host core normalized `RuntimeStats` (P5-b):
+//   * `rx_bytes`/`tx_bytes`   cumulative tunnel byte counters (engine authoritative)
+//   * `rx_rate_bps`/`tx_rate_bps`  core-normalized speeds (cumulative delta / interval;
+//     the engine `StatsEvent` rx_rate/tx_rate conveniences are NOT used)
+//   * `latency_ms`            0 = unknown/unavailable
+//   * `phase`                 coarse lifecycle stage at sample time
+//   * `engine_sequence`       engine sample ordinal (per engine boot)
+//   * `sample_tick`           core event-bus tick at publish time (0 = not published),
+//                             aligned with the `WatchEvents` monotonic tick axis
+//
+// Security: carries no secrets, credentials, or free-text diagnostic stacks
+// (same invariants as LogEvent / StatsEvent).
+message RuntimeStats {
+  uint64 rx_bytes = 1;        // cumulative bytes received on the tunnel
+  uint64 tx_bytes = 2;        // cumulative bytes transmitted on the tunnel
+  uint64 rx_rate_bps = 3;     // normalized receive speed (bytes/sec)
+  uint64 tx_rate_bps = 4;     // normalized transmit speed (bytes/sec)
+  uint64 latency_ms = 5;      // round-trip latency (ms); 0 = unknown
+  StatsPhase phase = 6;       // coarse lifecycle stage at sample time
+  uint64 engine_sequence = 7; // engine sample ordinal (per engine boot)
+  uint64 sample_tick = 8;     // core event-bus tick at publish; 0 = not published
+  reserved 9000 to 9999;
+}
+
+// A detected upstream proxy TUN adapter (Phase 7 C5-wire; mirrors win32-resource
+// `proxy_tun::ProxyTunAdapter`). Carried by `RuntimeSnapshot.proxy_tun` for
+// coexist-route status reporting (PRD G-⑥: detect-and-report only, no behavior).
+message ProxyTunAdapter {
+  string name = 1;        // friendly name (e.g. "Mihomo" / "Meta")
+  string description = 2; // interface description (e.g. "Wintun Userspace Tunnel")
+  uint32 if_index = 3;    // IPv4 interface index
+  string kind = 4;        // adapter kind (always "proxy_tun" for now)
+  reserved 9000 to 9999;
+}
+
+// Upstream proxy TUN detection outcome (Phase 7 C5-wire; detect-and-report only,
+// never changes routing — PRD O1). Carried by `RuntimeSnapshot` as a NON-oneof
+// companion field (same shape as `stats`, stats-wire 方案 A).
+//
+// Mirrors win32-resource `proxy_tun::ProxyTunDetection`:
+//   * `detected`      at least one upstream proxy TUN adapter present
+//   * `adapters`      the detected adapters (empty when `detected` is false)
+//   * `route_policy`  coexistence policy: "exv-before-proxy-tun" | "normal"
+//                     (aligns with C++ `to_json` `route_policy` strings)
+//
+// Security: carries adapter names/descriptions and interface indexes only — no
+// secrets, credentials, or free-text diagnostic stacks (same invariants as
+// RuntimeStats / LogEvent).
+message ProxyTunDetection {
+  bool detected = 1;      // whether an upstream proxy TUN adapter was detected
+  repeated ProxyTunAdapter adapters = 2;
+  string route_policy = 3; // "exv-before-proxy-tun" when detected, "normal" otherwise
+  reserved 9000 to 9999;
+}
+
+// System-proxy detect-and-report status (EXV_UNFREEZE 2026-08-24: system proxy
+// awareness, see docs/superpowers/evidence/2026-08-24-system-proxy-wire-unfreeze.md;
+// design §5.5). Carried by `RuntimeSnapshot.system_proxy` next to `proxy_tun`.
+// Status only — no behavior decision in v1. Classification is a pure function
+// of (proxy_present, tunnel_present); self-inconsistency fails closed upstream
+// and never reaches the wire.
+//
+// Security: carries counts and short enum-like strings only — no endpoint URLs,
+// no registry values, no secrets (same invariants as RuntimeStats / LogEvent).
+message SystemProxyDetection {
+  string mode = 1;            // "disabled" | "manual" | "automatic" | "mixed"
+  uint32 endpoint_count = 2;  // number of detected system-proxy endpoints
+  bool bypass_merged = 3;     // whether EXV exemption entries are merged into the system-proxy settings
+  string topology = 4;        // four-state topology: "t0" | "t1" | "t2" | "t3"
+  reserved 9000 to 9999;
+}
+
+// Auto-reconnect status (EXV_UNFREEZE 2026-08-25, see
+// docs/superpowers/evidence/2026-08-25-reconnect-wire-unfreeze.md). Carried by
+// `RuntimeSnapshot.reconnect` (C4 wire unfreeze). Status reporting only — the
+// reconnect decision stays host-side (C3a reconnect worker, mirrors
+// `reconnect_attempts` / `reconnect_active` in kernel_control_service.rs).
+//
+// Field semantics:
+//   * `auto_reconnect`  config switch; mirrors config key `auto_reconnect`
+//   * `max_attempts`     configured retry budget; mirrors
+//                        `auto_reconnect_max_attempts` (0 = unlimited)
+//   * `current_attempt`  retries already performed this connection
+//                        (per-connection, cleared on Connected; 0 = none)
+//   * `active`           a reconnect attempt is in flight right now
+message ReconnectStatus {
+  bool auto_reconnect = 1;    // config: auto-reconnect switch
+  uint32 max_attempts = 2;    // config: retry budget (0 = unlimited)
+  uint32 current_attempt = 3; // retries already performed (per-connection)
+  bool active = 4;            // a reconnect attempt is in flight
+  reserved 9000 to 9999;
+}
+
+// The win32 engine SCM service status (S3/D5; mirrors the host core
+// `ServiceStatusSnapshot` from win32 service_status). Carried by
+// `RuntimeSnapshot.service_status` for UI service awareness (D6). Display/status
+// only — never authorization material (the service's presence is not a capability;
+// peer identity comes only from verified transport metadata + PSK).
+message ServiceStatus {
+  bool installed = 1;   // service registered in SCM
+  string state = 2;     // "stopped" | "start_pending" | "stop_pending" | "running" | "other"
+  string binary_path = 3;  // SCM binary path incl. launch args; empty when not installed
+  string health_state = 4; // R3 unified service health: "healthy" | "scm_orphan" |
+                           // "installed_unavailable" | "payload_orphan" | "not_installed";
+                           // "" when host did not derive it. Display/routing input only,
+                           // never authorization material.
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain ConnectIntent.
+message ConnectIntent {
+  OperationLookupKey lookup_key = 1;
+  bytes request_digest = 2;  // 32 bytes
+  ConnectionProfileRef profile = 3;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain Attempt.
+message Attempt {
+  bytes runtime_epoch = 1;  // 16 bytes
+  bytes attempt_id = 2;     // 16 bytes
+  ConnectIntent intent = 3;
+  VpnError prior_error = 4;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain StopIntent.
+message StopIntent {
+  OperationLookupKey lookup_key = 1;
+  bytes request_digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain InteractionPrompt.
+message InteractionPrompt {
+  bytes interaction_id = 1;  // 16 bytes
+  bytes runtime_epoch = 2;   // 16 bytes
+  bytes attempt_id = 3;      // 16 bytes
+  uint64 deadline = 4;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain ConnectedSession.
+message ConnectedSession {
+  Attempt attempt = 1;
+  ProtocolSessionRef protocol_session = 2;
+  PlatformOwnershipRef platform_ownership = 3;
+  PacketLeaseRef packet_lease = 4;
+  PlatformReadyProof platform_ready = 5;
+  DataRunningProof data_running = 6;
+  reserved 9000 to 9999;
+}
+
+// Startup recovery context (no attempt yet).
+message StartupRecoveryContext {
+  bytes runtime_epoch = 1;  // 16 bytes
+  bytes recovery_id = 2;    // 16 bytes
+  reserved 9000 to 9999;
+}
+
+message AttemptTeardownContext {
+  Attempt attempt = 1;
+  reserved 9000 to 9999;
+}
+
+message OwnerLostContext {
+  bytes owner_lease_id = 1;  // 16 bytes
+  Attempt attempt = 2;
+  reserved 9000 to 9999;
+}
+
+message PacketBoundaryLostContext {
+  Attempt attempt = 1;
+  PacketLeaseRef packet_lease = 2;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain RecoveryContext.
+message RecoveryContext {
+  oneof context {
+    StartupRecoveryContext startup = 1;
+    AttemptTeardownContext attempt_teardown = 2;
+    OwnerLostContext owner_lost = 3;
+    PacketBoundaryLostContext packet_boundary_lost = 4;
+  }
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain RecoveryObligation.
+message RecoveryObligation {
+  bytes owner_runtime_epoch = 1;  // 16 bytes
+  bytes retirement_operation_id = 2;  // 16 bytes, optional
+  VpnError blocking_error = 3;
+  PlatformOwnershipRef platform_ownership = 4;
+  PacketLeaseRef packet_lease = 5;
+  bytes canonical_inventory_digest = 6;  // 32 bytes
+  reserved 9000 to 9999;
+}
+
+message IdleState {
+  CleanupProofRef last_cleanup = 1;
+  reserved 9000 to 9999;
+}
+
+message ConnectingState {
+  Attempt attempt = 1;
+  ConnectPhase phase = 2;
+  reserved 9000 to 9999;
+}
+
+message AwaitingInteractionState {
+  Attempt attempt = 1;
+  InteractionPrompt prompt = 2;
+  reserved 9000 to 9999;
+}
+
+message ConnectedState {
+  ConnectedSession session = 1;
+  // Engine wall-clock time at which this currently connected data-plane session
+  // was established. UTC epoch milliseconds; 0 means the time is unavailable.
+  // This is display-only telemetry, never an authorization or ownership input.
+  int64 session_established_at_ms = 2;
+  reserved 9000 to 9999;
+}
+
+message StoppingState {
+  Attempt attempt = 1;
+  StopIntent stop = 2;
+  ConnectIntent queued_connect = 3;
+  reserved 9000 to 9999;
+}
+
+message ReconcilingState {
+  RecoveryContext context = 1;
+  RecoveryObligation obligation = 2;
+  reserved 9000 to 9999;
+}
+
+message FailedCleanState {
+  VpnError last_error = 1;
+  CleanupProofRef proof = 2;
+  reserved 9000 to 9999;
+}
+
+message FailedDirtyState {
+  VpnError last_error = 1;
+  RecoveryContext context = 2;
+  RecoveryObligation obligation = 3;
+  reserved 9000 to 9999;
+}
+
+// Mirrors domain RuntimeState. Snapshots never carry passwords, cookies,
+// raw certificates, or free-text diagnostic stacks.
+//
+// `stats` is a NON-oneof companion field (stats-wire 方案 A): statistics are
+// state-adjacent sample data, not state itself. `GetSnapshot` and
+// `WatchEvents` carry it alongside `state`; absent/None means no sample yet
+// (data plane not started). Never carries secrets (see `RuntimeStats`).
+//
+// `proxy_tun` is the same shape of NON-oneof companion (Phase 7 C5-wire):
+// upstream proxy TUN detect-and-report status. `GetSnapshot`/`WatchEvents`
+// carry it alongside `state`; absent/None = not probed (or probe failed), and
+// `detected` distinguishes "probed and found none" from "not probed". Never
+// changes routing (PRD O1) — status reporting only (see `ProxyTunDetection`).
+message RuntimeSnapshot {
+  oneof state {
+    IdleState idle = 1;
+    ConnectingState connecting = 2;
+    AwaitingInteractionState awaiting_interaction = 3;
+    ConnectedState connected = 4;
+    StoppingState stopping = 5;
+    ReconcilingState reconciling = 6;
+    FailedCleanState failed_clean = 7;
+    FailedDirtyState failed_dirty = 8;
+  }
+  RuntimeStats stats = 9;  // latest normalized stats at snapshot time (None = no sample)
+  ProxyTunDetection proxy_tun = 10;  // upstream proxy TUN detect-and-report status (None = not detected/probed)
+  // R1: the 16-byte operation id of the in-flight connect/stop operation the
+  // snapshot belongs to (equals `OperationLookupKey.operation_id` / the
+  // `ApplyAccepted.operation_id`); empty when no operation is in flight. Lets
+  // the UI correlate every snapshot to the operation that produced it.
+  bytes operation_id = 11;  // 16 bytes; empty = no in-flight operation
+  // S3 (D5): the win32 engine SCM service status (None = not probed/queried).
+  // Display/status only — never authorization material.
+  ServiceStatus service_status = 12;
+  // S3 (D3): the connection mode shown to the user — "auto" | "service" | "oneshot".
+  // Display only: the routing decision is core-side (M3 decision table); there is
+  // NO ConnectIntent.mode field.
+  string mode = 13;
+  // EXV_UNFREEZE 2026-08-24: system proxy awareness, see docs/superpowers/evidence/2026-08-24-system-proxy-wire-unfreeze.md
+  // System-proxy detect-and-report status (design §5.5). Status only — no
+  // behavior decision in v1 (aligns with the PRD O1 precedent). Absent = not
+  // probed / probe not running.
+  SystemProxyDetection system_proxy = 14;
+  // EXV_UNFREEZE 2026-08-25: auto reconnect status, see docs/superpowers/evidence/2026-08-25-reconnect-wire-unfreeze.md
+  // Auto-reconnect status (design/board C3a/C4): config switch + retry budget +
+  // per-connection retry count + in-flight flag, mirrored from the host
+  // reconnect worker. Status reporting only — no behavior decision on the wire.
+  // Absent = reconnect not applicable (e.g. no connection ever established).
+  ReconnectStatus reconnect = 15;
+  reserved 9000 to 9999;
+}
+
+enum RuntimeEventKind {
+  RUNTIME_EVENT_KIND_UNSPECIFIED = 0;
+  RUNTIME_EVENT_KIND_SNAPSHOT = 1;
+  RUNTIME_EVENT_KIND_TRANSITION = 2;
+}
+
+// Streamed by KernelControl.WatchEvents.
+message RuntimeEvent {
+  uint64 monotonic_tick = 1;
+  RuntimeEventKind kind = 2;
+  RuntimeSnapshot snapshot = 3;
+  // R1: the 16-byte operation id of the operation this event belongs to
+  // (mirrors `snapshot.operation_id`); empty when no operation is in flight.
+  bytes operation_id = 4;  // 16 bytes; empty = no in-flight operation
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Logging (KernelControl.LogsList / LogsClear)
+// ---------------------------------------------------------------------------
+
+// A single structured log event. Moved here from helper_control.proto so both
+// KernelControl (logs.list for the UI) and HelperControl (StreamLogs from the
+// engine) share the same symbol; same exv.vpn.v1 package, generated Rust type
+// unchanged. No secrets ever travel in `fields` or `message`.
+message LogEvent {
+  string level = 1;        // info | warn | error
+  string component = 2;    // e.g. engine, packet, protocol, platform
+  string code = 3;         // stable diagnostic code, empty when none
+  string message = 4;      // human-readable message (no diagnostic stack)
+  map<string, string> fields = 5;  // structured key/value metadata, no secrets
+  int64 timestamp_ms = 6;  // wall-clock epoch milliseconds (UTC); 0 = unknown
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// Reply to KernelControl.LogsList. Entries are in ascending seq order; the
+// client continues with `after_seq = next_seq`.
+message LogsListReply {
+  repeated LogEvent entries = 1;
+  uint64 next_seq = 2;
+  reserved 9000 to 9999;
+}
+
+// Reply to KernelControl.LogsClear.
+message LogsClearReply {
+  bool cleared = 1;
+  uint64 removed_entries = 2;
+  reserved 9000 to 9999;
+}
+
+// ---------------------------------------------------------------------------
+// Config (KernelControl.ConfigGet / ConfigSet)
+// ---------------------------------------------------------------------------
+
+// A single configuration item as a key/value pair. Secrets (encrypted password
+// blob) are never returned in plaintext by ConfigGet; the key set excludes
+// secret-bearing fields.
+message ConfigItem {
+  string key = 1;
+  string value = 2;
+  reserved 9000 to 9999;
+}
+
+// Reply to KernelControl.ConfigGet. Contains only non-secret fields.
+message ConfigPayload {
+  repeated ConfigItem items = 1;
+  reserved 9000 to 9999;
+}
+
+// Reply to KernelControl.ConfigSet.
+message ConfigReply {
+  bool ok = 1;
+  reserved 9000 to 9999;
+}

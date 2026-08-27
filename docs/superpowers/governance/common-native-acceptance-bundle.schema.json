@@ -1,0 +1,109 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://example.invalid/exv/common-native-acceptance-bundle.schema.json",
+  "$comment": "historical display only; non-blocking",
+  "title": "Common 双原生主机验收证据包",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirement_id",
+    "candidate_common_commit",
+    "candidate_non_evidence_tree_digest",
+    "common_only_profile_digest",
+    "gate_set_digest",
+    "environment_policy_digest",
+    "runtime_identity",
+    "host_attestations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": "1.0"
+    },
+    "requirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "candidate_common_commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "candidate_non_evidence_tree_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "common_only_profile_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "gate_set_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "environment_policy_digest": {
+      "$ref": "#/$defs/sha256"
+    },
+    "runtime_identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "model_digest",
+        "model_schema_version",
+        "provider_contract_digest",
+        "system_contract_digest"
+      ],
+      "properties": {
+        "model_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "model_schema_version": {
+          "type": "string",
+          "minLength": 1
+        },
+        "provider_contract_digest": {
+          "$ref": "#/$defs/sha256"
+        },
+        "system_contract_digest": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "host_attestations": {
+      "type": "array",
+      "minItems": 2,
+      "maxItems": 2,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "host",
+          "evidence_kind",
+          "path",
+          "sha256"
+        ],
+        "properties": {
+          "host": {
+            "enum": [
+              "darwin",
+              "win32"
+            ]
+          },
+          "evidence_kind": {
+            "const": "real_machine"
+          },
+          "path": {
+            "type": "string",
+            "pattern": "^docs/superpowers/evidence/common-native-acceptance/[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?/(?:darwin|win32)\\.json$"
+          },
+          "sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$"
+    }
+  }
+}

@@ -1,0 +1,71 @@
+# EXV 独立 Tauri workspace（Phase 4，P4-b IPC 接线）。
+# requirement: vpn-rust-tauri-desktop-ui（独立 requirement，spec：不塞进 Common workspace）。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md。
+# 政策：前端重写（O2），不复用 C++ webui/（仅参考其功能清单）。
+#
+# 本 workspace 与 src/platform/win32/rust/（核心 runtime workspace）独立：
+#   * 独立 Cargo.lock（Tauri 依赖树大，且不与 runtime 竞争 resolver 版本）；
+#   * 不修改 src/platform/win32/rust/Cargo.toml（其 members = ["crates/*"]，本目录不在其中，
+#     故独立嵌套 workspace，不污染核心 runtime 的依赖解析）；
+#   * P4-b：经 path dependency 复用 core 侧 proto 生成代码（exv-vpn-wire，Root workspace
+#     成员）作为 tonic KernelControl client 的 wire 类型源——不复制 proto、不重生成，避免
+#     wire 契约分叉。exv-vpn-wire 的 `workspace = true` 依赖从其所属 Root workspace 解析，
+#     属标准跨 workspace path 依赖，不把本目录并进 Root members。
+
+[workspace]
+resolver = "3"
+members = ["app"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "Proprietary"
+
+[workspace.dependencies]
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+tokio-stream = { version = "0.1.19", features = ["sync"] }
+tracing = "0.1.44"
+
+# Tauri v2（独立 requirement 的独立依赖治理；版本由 tauri 2.x 线固定）。
+tauri = { version = "2", features = ["tray-icon", "image-png", "devtools", "custom-protocol"] }
+tauri-build = { version = "2", features = [] }
+tauri-plugin-log = "2"
+
+# P4-b：core KernelControl gRPC client 依赖（与核心 workspace 同 0.14.x）。
+tonic = { version = "0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
+http = "1.5.0"
+hyper-util = "0.1.20"
+tower = "0.5.3"
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
+sha2 = "0.11.0"
+windows = { version = "0.62.2", features = [
+    "Data_Xml_Dom",
+    "Foundation",
+    "UI_Notifications",
+    "Win32_Foundation",
+    "Win32_Graphics_Gdi",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_EnhancedStorage",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Pipes",
+    "Win32_System_Registry",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Threading",
+    "Win32_System_Variant",
+    "Win32_UI_Controls",
+    "Win32_UI_HiDpi",
+    "Win32_UI_Input_KeyboardAndMouse",
+    "Win32_UI_Shell",
+    "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
+] }
+
+# 复用 core 侧 proto 生成代码（KernelControl client + 全部 wire 消息）。Root workspace 成员。
+# 相对路径：tauri/ → rust(..) → win32(../..) → platform(../../..) → src(../../../..) →
+# 仓库根(../../../../..) → src/common/rust/crates/exv-vpn-wire。
+exv-vpn-wire = { path = "../../../../../src/common/rust/crates/exv-vpn-wire" }
+exv-vpn-win32-resource = { path = "../../../../../src/platform/win32/rust/crates/exv-vpn-win32-resource" }

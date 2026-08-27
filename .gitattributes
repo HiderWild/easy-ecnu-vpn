@@ -1,0 +1,7 @@
+.gitattributes text eol=lf
+*.sh text eol=lf
+*.plist text eol=lf
+*.nsh text eol=lf
+src/generated/distribution_config.hpp text eol=lf
+webui/src/generated/distribution.ts text eol=lf
+src/platform/win32/rust/tauri/frontend/src/assets/exv-logo.svg text eol=lf

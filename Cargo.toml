@@ -1,0 +1,54 @@
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
+
+[workspace]
+resolver = "3"
+members = ["src/common/rust/crates/*"]
+exclude = ["src/platform/win32/rust", "src/platform/darwin/rust"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "Proprietary"
+
+[workspace.dependencies]
+bytes = "1.12.1"
+futures-util = "0.3.34"
+http = "1.5.0"
+prost = "0.14.4"
+prost-types = "0.14.4"
+protoc-bin-vendored = "3.2.0"
+proptest = "1.11.0"
+rand = "0.10.2"
+rustls = { version = "0.23.43", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-platform-verifier = "0.7.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+subtle = "2.6.1"
+tempfile = "3.27.0"
+thiserror = "2.0.20"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12", "ring"] }
+tokio-stream = "0.1.19"
+tonic = { version = "0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
+tonic-prost = "0.14.6"
+tonic-prost-build = "0.14.6"
+tower = "0.5.3"
+tracing = "0.1.44"
+tracing-subscriber = { version = "0.3.23", features = ["env-filter", "fmt", "json"] }
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
+zeroize = { version = "1.9.0", features = ["zeroize_derive"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。

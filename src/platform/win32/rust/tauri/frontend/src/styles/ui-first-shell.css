@@ -1,0 +1,385 @@
+.product-window {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  overflow: hidden;
+  background: var(--surface-canvas);
+  color: var(--text-primary);
+  font-family: var(--font-ui);
+  /* 标题栏高度唯一真源：设置页右侧固定锚点轴与滚动容器顶部对齐时复用。 */
+  --titlebar-height: 34px;
+}
+
+.product-titlebar {
+  position: relative;
+  display: flex;
+  height: var(--titlebar-height);
+  flex: none;
+  align-items: center;
+  padding: 0;
+  border-bottom: 1px solid var(--border-subtle);
+  user-select: none;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.minimal-brand,
+.product-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+}
+
+.minimal-brand {
+  flex: none;
+  min-width: 64px;
+  /* 图标与 EXV 文字间距收窄（默认 gap 8px → 4px）；左侧边距减半（12→6px）。 */
+  gap: var(--space-1);
+  padding-left: calc(var(--space-3) / 2);
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.minimal-brand img {
+  /* 极简左上角图标：在上一轮缩小后的基础上再缩小约 1/4（27→20px）。 */
+  width: 20px;
+  height: 20px;
+}
+
+.product-brand img {
+  width: 72px;
+  height: 72px;
+}
+
+.minimal-brand strong {
+  font-size: 14px;
+  letter-spacing: 0.08em;
+}
+
+.titlebar-drag-space {
+  min-width: 0;
+  flex: 1;
+  height: 100%;
+  app-region: drag;
+  -webkit-app-region: drag;
+}
+
+.titlebar-actions {
+  position: relative;
+  display: flex;
+  height: 100%;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.mode-segmented-control,
+.titlebar-theme-mode-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  /* 垂直内边距收紧到 1px（原来 2px），配合按钮高度收敛，整体不越过 34px 标题栏。 */
+  padding: 1px 2px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-canvas) 84%, transparent);
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.mode-segmented-control__button,
+.titlebar-theme-mode-control__button {
+  display: inline-flex;
+  /* 高度 24→22px，并显式 min-height 覆盖 base.css 全局 button { min-height:36px }，
+     否则按钮被撑到 36px，整组溢出 34px 标题栏上下边缘。 */
+  height: 22px;
+  min-height: 22px;
+  min-width: 52px;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 11px;
+  line-height: 1;
+  transition: background-color 120ms ease, color 120ms ease;
+  cursor: pointer;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.titlebar-theme-mode-control__button {
+  min-width: 50px;
+}
+
+.mode-segmented-control__icon,
+.titlebar-theme-mode-control__icon {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+
+.mode-segmented-control--icon-only .mode-segmented-control__button,
+.titlebar-theme-mode-control--icon-only .titlebar-theme-mode-control__button {
+  width: 24px;
+  min-width: 24px;
+  padding: 0;
+}
+
+.mode-segmented-control__button:hover:not(:disabled),
+.titlebar-theme-mode-control__button:hover:not(:disabled) {
+  color: var(--text-primary);
+}
+
+.mode-segmented-control__button--active,
+.titlebar-theme-mode-control__button--active {
+  background: var(--accent-subtle);
+  color: var(--accent-strong);
+}
+
+.mode-segmented-control__button:focus-visible,
+.titlebar-theme-mode-control__button:focus-visible,
+.native-window-control:focus-visible {
+  outline: 3px solid var(--focus-ring);
+  outline-offset: -2px;
+}
+
+.mode-segmented-control__button:disabled,
+.titlebar-theme-mode-control__button:disabled,
+.native-window-control:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.native-window-controls {
+  display: flex;
+  width: 132px;
+  height: 100%;
+  flex: none;
+  align-items: stretch;
+  overflow: hidden;
+  pointer-events: auto;
+  app-region: no-drag;
+  -webkit-app-region: no-drag;
+}
+
+.product-window--minimal .native-window-controls {
+  width: 88px;
+}
+
+.native-window-control {
+  display: grid;
+  width: 44px;
+  height: 100%;
+  flex: none;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  pointer-events: auto;
+  cursor: pointer;
+  transition: background-color 120ms ease, color 120ms ease, filter 120ms ease;
+}
+
+.native-window-control svg {
+  width: 14px;
+  height: 14px;
+}
+
+.native-window-control:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.native-window-control--hover {
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+  color: var(--text-primary);
+}
+
+.native-window-control--pressed {
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  filter: brightness(0.92);
+}
+
+.native-window-control--close.native-window-control--hover,
+.native-window-control--close.native-window-control--pressed,
+.native-window-control--close:hover:not(:disabled) {
+  background: #dc2626;
+  color: #fff;
+}
+
+.product-body {
+  display: flex;
+  overflow: hidden;
+  min-height: 0;
+  flex: 1;
+}
+
+.product-rail {
+  display: flex;
+  container-name: product-rail;
+  container-type: inline-size;
+  /* 左侧栏在当前尺寸基础上拓宽约 10%，给连接信息保留更舒适的展示宽度。 */
+  width: clamp(212px, 23vw, 282px);
+  flex: none;
+  flex-direction: column;
+  gap: var(--space-5);
+  overflow-y: auto;
+  padding: var(--space-5);
+  border-right: 1px solid var(--border-subtle);
+  background: var(--surface-subtle);
+  scrollbar-width: none;
+}
+
+.product-rail::-webkit-scrollbar { display: none; }
+
+.product-brand strong {
+  display: block;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.product-brand span {
+  display: block;
+  color: var(--text-secondary);
+  font-size: 13px;
+}
+
+.product-rail nav {
+  display: grid;
+  gap: var(--space-1);
+}
+
+.product-rail nav button {
+  padding: 9px 10px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-secondary);
+  text-align: left;
+}
+
+.product-rail nav button:hover,
+.product-rail nav button.active {
+  background: var(--accent-subtle);
+  color: var(--accent-strong);
+}
+
+/* 连接信息卡（ConnectionSidebar）沉底：左侧栏最下方而非紧接导航按钮。 */
+.product-rail__connection {
+  margin-top: auto;
+}
+
+.product-content {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  /* 主内容区取消上下内边距；各页面自行管理标题、滚动区和内容间距，避免
+     设置/日志页顶部横条被外层留白推离窗口边缘。左右仍保留壳层安全间距。 */
+  padding: 0 var(--space-6);
+}
+
+.product-content--scrollable {
+  overflow: auto;
+  overscroll-behavior: contain;
+  /* 取消原生滚动条（设置/日志页共用滚动容器）：隐藏滚动条但保留滚动功能；
+     右侧释放出的 8px 槽位并入内容区，右侧空隙全部留给设置页固定锚点轴。 */
+  scrollbar-width: none;
+}
+
+.product-content--scrollable::-webkit-scrollbar {
+  display: none;
+}
+
+.product-window--minimal {
+  width: 328px;
+  min-width: 328px;
+  max-width: 328px;
+  height: 136px;
+  min-height: 136px;
+  max-height: 136px;
+  overflow: hidden;
+}
+
+.product-window--minimal .product-body {
+  height: 102px;
+  min-height: 102px;
+  max-height: 102px;
+}
+
+.product-window--minimal .product-content {
+  width: 328px;
+  min-width: 328px;
+  max-width: 328px;
+  height: 102px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.minimal-connection-view {
+  width: 328px;
+  height: 102px;
+  min-height: 102px;
+}
+
+.minimal-connection-view__title {
+  font-size: 17px;
+}
+
+.minimal-connection-view__detail,
+.minimal-connection-view__metric {
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.minimal-connection-view__action {
+  min-width: 72px;
+  min-height: 32px;
+  font-size: 14px;
+}
+
+.minimal-progress {
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  gap: 3px;
+}
+
+.minimal-progress-segment {
+  height: 4px;
+  border-radius: 999px;
+}
+
+@media (min-width: 860px) {
+  .product-window--advanced {
+    min-width: 860px;
+    min-height: 600px;
+  }
+}
+
+@media (max-width: 760px) {
+  .product-rail {
+    /* 窄窗口继续保留拓宽后的侧栏比例，避免信息列过度压缩。 */
+    width: 194px;
+    padding: var(--space-3);
+  }
+
+  .product-content {
+    padding: 0 var(--space-4);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .minimal-progress-segment--current {
+    animation: none;
+  }
+}

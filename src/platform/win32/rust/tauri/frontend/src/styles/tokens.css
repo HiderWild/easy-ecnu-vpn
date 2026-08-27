@@ -1,0 +1,187 @@
+:root {
+  color-scheme: light;
+
+  --font-ui: "Segoe UI Variable Text", "Segoe UI", "SF Pro Text", -apple-system, BlinkMacSystemFont,
+    "Microsoft YaHei UI", "Microsoft YaHei", sans-serif;
+  --font-mono: "Cascadia Mono", "SFMono-Regular", Consolas, monospace;
+
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  /* 产品主页面共用的顶部留白：保留两档常规间距，避免各页自行漂移。 */
+  --product-page-top-gap: calc(2 * var(--space-5));
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 14px;
+
+  --surface-canvas: #f4f6f8;
+  --surface-panel: #ffffff;
+  --surface-subtle: #edf1f5;
+  --surface-raised: #ffffff;
+  --text-primary: #182230;
+  --text-secondary: #4f6073;
+  --text-tertiary: #68788a;
+  --border-subtle: #cad3dd;
+  --border-strong: #9eacbb;
+  --focus-ring: #145fc8;
+  --state-success: #147653;
+  --state-warning: #985f00;
+  --state-danger: #b4232c;
+  --shadow-raised: 0 8px 24px rgb(24 34 48 / 8%);
+
+  --accent: #2067d6;
+  --accent-strong: #174faa;
+  --accent-subtle: #e8f0ff;
+  --accent-on: #ffffff;
+
+  /* 旧测试页面在后续组件迁移前继续使用的兼容语义别名。 */
+  --bg: var(--surface-canvas);
+  --bg-2: var(--surface-subtle);
+  --panel: var(--surface-panel);
+  --border: var(--border-subtle);
+  --text: var(--text-primary);
+  --text-dim: var(--text-secondary);
+  --accent-dim: var(--accent-strong);
+  --ok: var(--state-success);
+  --warn: var(--state-warning);
+  --err: var(--state-danger);
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --surface-canvas: #111a22;
+  --surface-panel: #192631;
+  --surface-subtle: #15202a;
+  --surface-raised: #21303d;
+  --text-primary: #f1f5f9;
+  --text-secondary: #bdc9d6;
+  --text-tertiary: #9aaaba;
+  --border-subtle: #3a4a59;
+  --border-strong: #647588;
+  --focus-ring: #a9c8ff;
+  --state-success: #4bc994;
+  --state-warning: #f4ba5b;
+  --state-danger: #ff9194;
+  --shadow-raised: 0 10px 28px rgb(0 0 0 / 24%);
+  --accent: #79aaff;
+  --accent-strong: #a6c7ff;
+  --accent-subtle: #1d385d;
+  --accent-on: #10223c;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"] {
+    color-scheme: dark;
+    --surface-canvas: #111a22;
+    --surface-panel: #192631;
+    --surface-subtle: #15202a;
+    --surface-raised: #21303d;
+    --text-primary: #f1f5f9;
+    --text-secondary: #bdc9d6;
+    --text-tertiary: #9aaaba;
+    --border-subtle: #3a4a59;
+    --border-strong: #647588;
+    --focus-ring: #a9c8ff;
+    --state-success: #4bc994;
+    --state-warning: #f4ba5b;
+    --state-danger: #ff9194;
+    --shadow-raised: 0 10px 28px rgb(0 0 0 / 24%);
+    --accent: #79aaff;
+    --accent-strong: #a6c7ff;
+    --accent-subtle: #1d385d;
+    --accent-on: #10223c;
+  }
+}
+
+:root[data-accent="azure"] {
+  --accent: #2067d6;
+  --accent-strong: #174faa;
+  --accent-subtle: #e8f0ff;
+  --accent-on: #ffffff;
+}
+
+:root[data-accent="violet"] {
+  --accent: #6550a4;
+  --accent-strong: #4f3d83;
+  --accent-subtle: #f0ebfa;
+  --accent-on: #ffffff;
+}
+
+:root[data-accent="jade"] {
+  --accent: #087a5a;
+  --accent-strong: #056047;
+  --accent-subtle: #e3f4ed;
+  --accent-on: #ffffff;
+}
+
+:root[data-accent="amber"] {
+  --accent: #9a5b00;
+  --accent-strong: #794800;
+  --accent-subtle: #fff3df;
+  --accent-on: #ffffff;
+}
+
+:root[data-theme="dark"][data-accent="azure"] {
+  --accent: #79aaff;
+  --accent-strong: #a6c7ff;
+  --accent-subtle: #1d385d;
+  --accent-on: #10223c;
+}
+
+:root[data-theme="dark"][data-accent="violet"] {
+  --accent: #c4b5fd;
+  --accent-strong: #ddd4ff;
+  --accent-subtle: #35285b;
+  --accent-on: #281d49;
+}
+
+:root[data-theme="dark"][data-accent="jade"] {
+  --accent: #62d5ad;
+  --accent-strong: #99ebcd;
+  --accent-subtle: #163d32;
+  --accent-on: #103428;
+}
+
+:root[data-theme="dark"][data-accent="amber"] {
+  --accent: #f4c36c;
+  --accent-strong: #ffe0a5;
+  --accent-subtle: #493411;
+  --accent-on: #432d00;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root[data-theme="system"][data-accent="azure"] {
+    --accent: #79aaff;
+    --accent-strong: #a6c7ff;
+    --accent-subtle: #1d385d;
+    --accent-on: #10223c;
+  }
+
+  :root[data-theme="system"][data-accent="violet"] {
+    --accent: #c4b5fd;
+    --accent-strong: #ddd4ff;
+    --accent-subtle: #35285b;
+    --accent-on: #281d49;
+  }
+
+  :root[data-theme="system"][data-accent="jade"] {
+    --accent: #62d5ad;
+    --accent-strong: #99ebcd;
+    --accent-subtle: #163d32;
+    --accent-on: #103428;
+  }
+
+  :root[data-theme="system"][data-accent="amber"] {
+    --accent: #f4c36c;
+    --accent-strong: #ffe0a5;
+    --accent-subtle: #493411;
+    --accent-on: #432d00;
+  }
+}

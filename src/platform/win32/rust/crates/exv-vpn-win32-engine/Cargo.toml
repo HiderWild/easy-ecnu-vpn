@@ -1,0 +1,48 @@
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
+
+[package]
+name = "exv-engine"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+exv-vpn-cstp = { workspace = true }
+exv-vpn-domain = { workspace = true }
+exv-vpn-resource = { workspace = true }
+exv-vpn-data-plane = { workspace = true }
+exv-vpn-local-rpc = { workspace = true }
+exv-vpn-wire = { workspace = true }
+exv-vpn-win32-ipc = { workspace = true }
+exv-vpn-win32-config = { workspace = true }
+exv-vpn-win32-resource = { workspace = true }
+hyper-util = "0.1.20"
+prost = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tonic = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+windows = { workspace = true, features = ["Win32_UI_Shell", "Win32_System_Registry", "Win32_System_Services"] }
+windows-service = "0.8"
+zeroize = { workspace = true }
+
+[dev-dependencies]
+aes-gcm = { workspace = true }
+base64 = { workspace = true }
+bytes = "1"
+exv-vpn-testkit = { workspace = true }
+http-body-util = "0.1"
+proptest = { workspace = true }
+tempfile = { workspace = true }
+tonic-prost = "0.14"
+
+[lints]
+workspace = true
+
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。

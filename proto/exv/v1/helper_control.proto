@@ -1,0 +1,590 @@
+// EXV_CUTOVER (2026-08-17): Rust is the active product line; C++ is deprecated, reference only.
+// Spec: docs/superpowers/specs/vpn-rust-native-runtime-mvp-common-architecture.md
+// section 9.2 (Windows HelperControl); cutover record: docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md; re-wiring requires a new cutover requirement and a rerun of the real business flow on the native host - satisfied by the 2026-08-17 cutover.
+//
+// EXV_FROZEN_WIRE (2026-08-18): helper_control was frozen; this file is now UNFROZEN by the
+// R1w unfreeze record (docs/superpowers/evidence/2026-08-18-helper-control-frozen-wire-unfreeze.md)
+// for the async + independent status-channel contract. The unfreeze is narrowly scoped to:
+//   * ApplyTunnelReply gains a `pending` branch (ApplyAccepted) - ApplyTunnel becomes async
+//     (engine returns pending immediately; terminal outcome flows on the status channel);
+//   * a NEW independent server-streaming status RPC (StreamConnectStatus) carries
+//     operation_id + 8-level ConnectPhase + coarse StatsPhase + optional VpnError. It is a
+//     SEPARATE channel from StreamStats (stats stays pure counters - never "one channel,
+//     two jobs"). Tag discipline is unchanged: reserved 1000-1999 (burn-in guard) and
+//     9000-9999 (internal/future) hold; all new tags sit outside those ranges.
+// Any further unfreeze requires a new unfreeze record under the same governance process.
+//
+// EXV_FROZEN_WIRE (2026-08-19): second unfreeze by the P2 keepalive record
+// (docs/superpowers/evidence/2026-08-19-helper-control-frozen-wire-unfreeze-keepalive.md)
+// for the bounded-retention heartbeat contract. The unfreeze is narrowly scoped to:
+//   * a NEW unary KeepAlive RPC (request/reply below) — the core sends a heartbeat
+//     on a fixed period (default 10s); the engine's heartbeat watchdog self-cleans
+//     and self-exits if no KeepAlive arrives within the timeout bound (default 15s).
+//     Oneshot only: the service engine manages its own SCM lifecycle and is
+//     unaffected by the heartbeat. Tag discipline is unchanged: reserved
+//     1000-1999 (burn-in guard) and 9000-9999 (internal/future) hold; the new tags
+//     sit outside those ranges.
+//
+// EXV_FROZEN_WIRE (2026-08-22): third unfreeze by the ServiceManage record
+// (docs/superpowers/evidence/2026-08-22-helper-control-frozen-wire-unfreeze-servicemanage.md)
+// for the running-service self-service query contract. The unfreeze is narrowly
+// scoped to:
+//   * a NEW unary ServiceManage RPC (request/reply below) — the host queries the
+//     engine's internal deep self-report over the EXISTING zero-UAC auth channel
+//     (Tier 2). Read-only: the reply IS the report; no mutation, no owner-lease
+//     requirement (transport peer gate only). Tier 2 v1 lands ONLY the `query`
+//     action; install/repair/uninstall stay elevated-batch. The report carries
+//     facts ONLY the engine knows (control_plane_ready / psk_present /
+//     connection_mode / runtime_epoch / authority_fence) — health/display input
+//     only, NEVER authorization material. Tag discipline is unchanged: reserved
+//     1000-1999 (burn-in guard) and 9000-9999 (internal/future) hold; the new
+//     tags sit outside those ranges.
+//
+// This file is the shared wire authority for the Windows helper topology's
+// declarative service. It does NOT expose fine-grained platform commands
+// (route/dns/device primitives); it only carries high-level declarative
+// operations. The wire AcquireLease maps to domain AcquireOwnership.
+// Domain code never exposes generated types directly.
+//
+// WIRE DECISION (productization Phase 1, P1-1/P1-2): product core<->engine
+// wire is tonic gRPC over this proto contract ONLY. The self-developed JSON
+// frame protocol (src/platform/win32/rust/crates/exv-vpn-win32-ipc/src/
+// engine_protocol.rs, u32 BE length + JSON) is legacy / acceptance-only: it is
+// retained for the acceptance harness and as the raw-dump serialization
+// reference, never used as a product channel. Log streaming between engine
+// (server) and core (client) is defined here as HelperControl.StreamLogs.
+//
+// Field tags are permanently assigned and never reused. Reserved ranges:
+//   reserved 9000 to 9999  : internal / future use, never shipped
+//   reserved 1000 to 1999  : burn-in guard for each message
+// A tag that is vacated is recorded as a reserved range in this file before
+// any reuse is ever permitted; reuse is forbidden by policy.
+//
+// Security invariants (mirrored from common.proto section 9.2):
+//   * Peer identity is derived exclusively from verified transport metadata,
+//     never from a client-supplied field; no field self-reports platform
+//     identity.
+//   * Capabilities are non-forwardable, not logged, not persisted in plaintext,
+//     not reused, compared in constant time, and revoked on Stop, OwnerLost,
+//     authority restart, or expiry. Only digests are retained for
+//     correlation/audit and are never treated as authorization material.
+//   * Secrets travel only as one-shot bytes and are never persisted, logged,
+//     or replayed; they are cleared immediately after authorization.
+//   * Every cross-process VpnError uses the canonical ErrorSubject oneof from
+//     common.proto with exactly six branches.
+
+syntax = "proto3";
+
+package exv.vpn.v1;
+
+import "exv/v1/common.proto";
+
+// ---------------------------------------------------------------------------
+// HelperControl service
+// ---------------------------------------------------------------------------
+
+// Declarative control service owned by the Windows helper. It exposes high
+// level ownership, tunnel, and operation-introspection RPCs only; it does not
+// expose low-level platform mutation commands.
+service HelperControl {
+  // Bidi lease-maintenance stream. The first authorization handshake
+  // establishes the authenticated principal, a random OwnerLeaseId,
+  // connection/channel identity, runtime epoch, and a non-forwardable
+  // capability. The same stream carries the semantics of the
+  // OwnershipTokenReceived acknowledgment and periodic lease keepalive.
+  rpc MaintainOwnerLease(stream HostLeaseMessage)
+      returns (stream HelperLeaseMessage);
+
+  // Observe the current owned runtime state without mutating ownership.
+  rpc ObserveOwnedState(ObserveOwnedStateRequest)
+      returns (ObserveOwnedStateReply);
+
+  // Acquire (or re-select) the platform ownership lease. Maps to domain
+  // AcquireOwnership. May only be initiated by the current principal/connection.
+  rpc AcquireLease(AcquireLeaseRequest) returns (AcquireLeaseReply);
+
+  // Apply the negotiated tunnel plan to the platform. R1w: async - the engine returns a
+  // `pending` ApplyAccepted immediately; the terminal outcome (succeeded / failed) and the
+  // fine-grained phase progression flow on the independent StreamConnectStatus channel.
+  rpc ApplyTunnel(ApplyTunnelRequest) returns (ApplyTunnelReply);
+
+  // Tear down the currently applied tunnel.
+  rpc StopTunnel(StopTunnelRequest) returns (StopTunnelReply);
+
+  // Introspect the disposition of a previously submitted operation.
+  rpc GetOperation(GetOperationRequest) returns (GetOperationReply);
+
+  // Release (retire) the current ownership lease.
+  rpc ReleaseLease(ReleaseLeaseRequest) returns (ReleaseLeaseReply);
+
+  // Stream structured logs from the engine to the core. Server-streaming: the
+  // engine (server) pushes LogEvent messages as they are produced; the core
+  // (client) is the sole log consumer and the disk-file truth source. This is
+  // the product log channel, distinct from KernelControl.WatchEvents (runtime
+  // state/transitions) and from the legacy JSON-frame log pipe (acceptance
+  // only).
+  rpc StreamLogs(StreamLogsRequest) returns (stream LogEvent);
+
+  // Stream periodic statistics samples from the engine to the core.
+  // Server-streaming: the engine (server) pushes StatsEvent samples on the
+  // requested interval; the core (client) is the sole stats consumer. This is
+  // the product stats channel, distinct from HelperControl.StreamLogs
+  // (structured logs), HelperControl.StreamConnectStatus (connect status
+  // events) and KernelControl.WatchEvents (runtime state/transitions).
+  // The engine pushes cumulative rx/tx byte counters plus optional sampled
+  // rates; the core derives display speed from byte deltas (Phase 5, P5-2).
+  // Each sample also carries the coarse lifecycle stage (StatsPhase) for the
+  // core's status display. StreamStats stays a COUNTER + COARSE-PHASE channel
+  // (R1w): the fine 8-level connect status is a SEPARATE channel
+  // (StreamConnectStatus) - never "one channel, two jobs".
+  rpc StreamStats(StreamStatsRequest) returns (stream StatsEvent);
+
+  // Stream connect-status events from the engine to the core. Server-streaming:
+  // the engine (server) pushes ConnectStatusEvent messages on the independent
+  // status channel (R1w). Each event carries the operation_id of the in-flight
+  // ApplyTunnel operation, the fine 8-level ConnectPhase, the coarse StatsPhase
+  // lifecycle stage, and an optional VpnError when the attempt fails. The core
+  // correlates events to the pending ApplyAccepted reply via operation_id.
+  //
+  // ORDERING CONSTRAINT (R1, hard): the core MUST open this stream BEFORE
+  // issuing ApplyTunnel/StopTunnel for a correlated operation. The status
+  // publisher is snapshot-less — events published while no stream is attached
+  // are dropped, and the stream is last-writer-wins per client. Attaching
+  // first guarantees every pending -> phase -> terminal event of the operation
+  // is observed; attaching after the ApplyTunnel RPC has returned can drop the
+  // early phase events of that operation. Do not rely on a later attach to
+  // replay history.
+  //
+  // This is the product status channel, DISTINCT from StreamStats (byte
+  // counters plus a coarse lifecycle phase - stats never carries fine connect
+  // status) and from StreamLogs (diagnostic output only - logs never carry
+  // state). Real data-plane status arrives with R1b; until then the engine
+  // pushes the phase progression driven by the current apply/stop signals
+  // (testable pipeline, real Named Pipe transport).
+  rpc StreamConnectStatus(StreamConnectStatusRequest)
+      returns (stream ConnectStatusEvent);
+
+  // Keep the engine's heartbeat watchdog alive (P2 bounded retention). The core
+  // sends this unary heartbeat on a fixed period (default 10s); the engine
+  // refreshes its last-heartbeat timestamp on receipt and self-cleans +
+  // self-exits if no KeepAlive arrives within the timeout bound (default 15s —
+  // hung-core / process-handle-failure backstop). Oneshot only: the service
+  // engine (future SCM form) manages its own lifecycle and is unaffected.
+  rpc KeepAlive(KeepAliveRequest) returns (KeepAliveReply);
+
+  // ServiceManage queries the engine's internal deep self-report (Tier 2
+  // zero-UAC channel). Read-only: the reply is the report; no mutation, no
+  // owner-lease requirement (transport peer gate only). Tier 2 v1 lands ONLY
+  // the `query` action; install/repair/uninstall stay elevated-batch.
+  rpc ServiceManage(ServiceManageRequest) returns (ServiceManageReply);
+}
+
+// ---------------------------------------------------------------------------
+// MaintainOwnerLease
+// ---------------------------------------------------------------------------
+
+// Host -> helper direction on the lease-maintenance stream. The first message
+// of the stream carries the authorization handshake; subsequent messages carry
+// keepalive and OwnershipTokenReceived acknowledgments.
+message HostLeaseMessage {
+  bytes owner_lease_id = 1;  // 16 bytes
+  bytes runtime_epoch = 2;   // 16 bytes
+
+  oneof message {
+    LeaseHandshake handshake = 3;
+    LeaseKeepalive keepalive = 4;
+    OwnershipTokenReceived ownership_token_received = 5;
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// (empty) helper -> host direction on the lease-maintenance stream helper
+// messages. The helper is the server; the host drives the handshake, so the
+// helper largely acknowledges and reports lease state.
+message HelperLeaseMessage {
+  bytes owner_lease_id = 1;  // 16 bytes
+  bytes runtime_epoch = 2;   // 16 bytes
+
+  oneof message {
+    LeaseHandshakeAccepted handshake_accepted = 3;
+    LeaseKeepaliveAck keepalive_ack = 4;
+    OwnerLost owner_lost = 5;
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// First host message on the MaintainOwnerLease stream. Establishes the
+// authenticated principal, connection/channel identity, runtime epoch, and the
+// non-forwardable capability. capability_digest is a digest only; the raw
+// capability is never placed on the wire.
+message LeaseHandshake {
+  bytes principal_digest = 1;  // 32 bytes
+  bytes capability_digest = 2; // 32 bytes
+  bytes channel_identity_digest = 3;  // 32 bytes
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// Host confirms the handshake was accepted; the lease is held.
+message LeaseHandshakeAccepted {
+  AuthorityFence authority_fence = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// Periodic keepalive from the host to keep the lease alive.
+message LeaseKeepalive {
+  uint64 monotonic_tick = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message LeaseKeepaliveAck {
+  uint64 monotonic_tick = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// Host confirms it received the ownership token (semantics of
+// OwnershipTokenReceived). The one-shot secret token is carried as bytes and
+// cleared immediately after the peer acknowledges ownership.
+message OwnershipTokenReceived {
+  bytes ownership_token = 1;  // one-shot secret bytes
+  bytes ownership_token_digest = 2;  // 32 bytes, for correlation only
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// Helper reports that the owner lease was lost (OwnerLost) and must be
+// re-established before any further mutation is accepted.
+message OwnerLost {
+  VpnError error = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// ObserveOwnedState
+// ---------------------------------------------------------------------------
+
+message ObserveOwnedStateRequest {
+  OperationLookupKey lookup_key = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message ObserveOwnedStateReply {
+  RuntimeSnapshot snapshot = 1;
+  AuthorityFence authority_fence = 2;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// AcquireLease
+// ---------------------------------------------------------------------------
+
+// Maps to domain AcquireOwnership. Only the current principal/connection may
+// initiate. Every mutation binds the owner capability, peer, connection,
+// runtime epoch, ownership version, ownership token, operation/effect identity,
+// and request digest together.
+message AcquireLeaseRequest {
+  OperationLookupKey lookup_key = 1;
+  PlatformOwnershipRef platform_ownership = 2;
+  bytes request_digest = 3;  // 32 bytes
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message AcquireLeaseReply {
+  oneof result {
+    MutationReceipt acquired = 1;
+    OperationFailed failed = 2;
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// ApplyTunnel
+// ---------------------------------------------------------------------------
+
+// Apply the negotiated tunnel plan to the platform.
+//
+// `secret_payload` (tag=4, P3-b) carries the one-shot CSTP authentication
+// credentials (serde JSON CredentialPackage, version=1 prefix, username +
+// password) assembled by the host's credential lifecycle (credential.rs,
+// P3-a). Security invariants above apply: the bytes are one-shot, are NEVER
+// persisted or logged, and must be cleared (zeroized) immediately after the
+// engine consumes them for CSTP auth. An absent/empty payload means no
+// credentials are provided (connect without re-auth is the caller's choice).
+message ApplyTunnelRequest {
+  OperationLookupKey lookup_key = 1;
+  TunnelPlan plan = 2;
+  bytes request_digest = 3;  // 32 bytes
+  bytes secret_payload = 4;  // one-shot CSTP credentials; zeroized after use
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// R1w: `ApplyTunnel` is now async. The engine returns `pending` (an ApplyAccepted
+// acknowledgment) as soon as the operation is admitted; the terminal outcome
+// (`applied` / `failed`) and the phase progression flow on StreamConnectStatus.
+// The `pending` branch is tag=3 (tags 1-2 are the terminal branches; tag 3 was free
+// inside the reserved-ranges policy).
+message ApplyTunnelReply {
+  oneof result {
+    MutationReceipt applied = 1;
+    OperationFailed failed = 2;
+    ApplyAccepted pending = 3;  // R1w: admitted and in-flight, not yet terminal
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// R1w: the pending acknowledgment returned by `ApplyTunnel` as soon as the
+// operation is admitted. Carries the operation_id the core uses to correlate the
+// in-flight operation against StreamConnectStatus events, plus the authority fence
+// at admission time. It is NOT a terminal receipt (no effect_id / certainty):
+// terminal outcome is delivered on the status channel.
+message ApplyAccepted {
+  bytes operation_id = 1;  // 16 bytes; correlates the pending apply to StreamConnectStatus
+  AuthorityFence authority_fence = 2;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// StopTunnel
+// ---------------------------------------------------------------------------
+
+message StopTunnelRequest {
+  OperationLookupKey lookup_key = 1;
+  bytes request_digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message StopTunnelReply {
+  oneof result {
+    MutationReceipt stopped = 1;
+    OperationFailed failed = 2;
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// GetOperation
+// ---------------------------------------------------------------------------
+
+message GetOperationRequest {
+  OperationLookupKey lookup_key = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message GetOperationReply {
+  OperationState state = 1;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// ReleaseLease
+// ---------------------------------------------------------------------------
+
+// Retires the current ownership lease. Returns a CleanProof-compatible receipt
+// so the host can prove the prior ownership was fully cleaned up.
+message ReleaseLeaseRequest {
+  OperationLookupKey lookup_key = 1;
+  bytes request_digest = 2;  // 32 bytes
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+message ReleaseLeaseReply {
+  oneof result {
+    MutationReceipt released = 1;
+    OperationFailed failed = 2;
+  }
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// StreamLogs
+// ---------------------------------------------------------------------------
+
+// Request for HelperControl.StreamLogs. The client may resume from a
+// monotonic tick (same idiom as KernelControl.WatchEventsRequest); an empty
+// request starts from the current stream position.
+message StreamLogsRequest {
+  uint64 resume_tick = 1;  // 0 means start from the current stream position
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// A structured log event pushed from the engine to the core. This is the
+// product wire format for engine logs (see the WIRE DECISION note above); the
+// legacy JSON-frame LogEvent in win32-ipc log_pipe.rs is acceptance-only.
+// Security: no LogEvent field may carry a secret, capability, password,
+// cookie, raw certificate, native handle, or free-text diagnostic stack;
+// fields are structured diagnostic metadata only, and free-text diagnostic
+// stacks never travel on the wire.
+// LogEvent now lives in common.proto (moved so KernelControl.LogsList and
+// HelperControl.StreamLogs share the identical symbol; same exv.vpn.v1
+// package, generated Rust type unchanged). See common.proto for the field
+// contract.
+
+// ---------------------------------------------------------------------------
+// StreamStats
+// ---------------------------------------------------------------------------
+
+// Request for HelperControl.StreamStats. `sample_interval_ms` selects the
+// push interval; 0 means the engine default (1000 ms). The stream starts at
+// the current counter values and stays open until the client disconnects.
+message StreamStatsRequest {
+  uint32 sample_interval_ms = 1;  // 0 = engine default (1000 ms)
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// StatsPhase now lives in common.proto (shared with `RuntimeSnapshot.stats`);
+// same exv.vpn.v1 package, so `StatsEvent.phase` resolves to the identical
+// generated symbol via the `exv/v1/common.proto` import above.
+
+// A periodic statistics sample pushed from the engine to the core.
+//
+// `rx_bytes`/`tx_bytes` are cumulative tunnel byte counters (saturating) and
+// are the authoritative traffic source: the core derives display speed from
+// deltas between samples (Phase 5, P5-2). `rx_rate`/`tx_rate` are engine-side
+// sampled bytes/sec on the last interval (0 when no prior sample yet), offered
+// as a convenience for the core. `latency_ms` is 0 when unknown/unavailable.
+//
+// Security: stats carry no secrets, credentials, or free-text diagnostic
+// stacks (same invariants as LogEvent).
+message StatsEvent {
+  uint64 sequence = 1;      // monotonic sample sequence (per engine boot)
+  int64 timestamp_ms = 2;   // wall-clock epoch milliseconds (UTC); 0 = unknown
+  StatsPhase phase = 3;
+  uint64 rx_bytes = 4;      // cumulative bytes received on the tunnel
+  uint64 tx_bytes = 5;      // cumulative bytes transmitted on the tunnel
+  uint64 rx_rate = 6;       // sampled bytes/sec since the prior sample; 0 = none
+  uint64 tx_rate = 7;       // sampled bytes/sec since the prior sample; 0 = none
+  uint64 latency_ms = 8;    // 0 = unknown/unavailable
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// StreamConnectStatus (R1w: independent connect-status channel)
+// ---------------------------------------------------------------------------
+
+// Request for HelperControl.StreamConnectStatus. Currently empty: the stream
+// starts at the current position and pushes every connect-status event for the
+// connection. (A future resume/filter field would land in tag=1+, inside the
+// reserved-ranges policy.)
+message StreamConnectStatusRequest {
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// A connect-status event pushed from the engine to the core on the independent
+// status channel (R1w). This is the status snapshot/event carrier: the core
+// correlates it to the `ApplyAccepted.operation_id` returned by the async
+// `ApplyTunnel` call and drives the pending -> phase -> terminal UI model.
+//
+//   * `operation_id`  the 16-byte operation id of the in-flight ApplyTunnel
+//     (equals `OperationLookupKey.operation_id`); every event for the same
+//     operation carries the same value.
+//   * `connect_phase` the fine 8-level ConnectPhase (common.proto): the connect
+//     attempt's position (observing -> acquiring -> connecting -> interaction ->
+//     negotiating -> applying -> attaching -> starting data plane).
+//   * `coarse_phase`  the coarse StatsPhase lifecycle stage (common.proto):
+//     Idle / Connecting / Connected / Stopping / Failed.
+//   * `error`         present when the attempt fails (coarse_phase = Failed);
+//     absent otherwise. Carries no free-text diagnostic stack (spec §10).
+//
+// Security: carries no secrets, credentials, or free-text diagnostic stacks
+// (same invariants as LogEvent / StatsEvent).
+message ConnectStatusEvent {
+  bytes operation_id = 1;   // 16 bytes; correlates to ApplyAccepted.operation_id
+  ConnectPhase connect_phase = 2;  // fine 8-level phase (common.proto)
+  StatsPhase coarse_phase = 3;     // coarse lifecycle stage (common.proto)
+  VpnError error = 4;              // present only when the attempt fails
+  // Engine wall-clock time at which a Connected status was established; UTC
+  // epoch milliseconds. 0 for all non-Connected events or when unavailable.
+  int64 session_established_at_ms = 5;
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// KeepAlive (P2: bounded-retention heartbeat)
+// ---------------------------------------------------------------------------
+
+// A unidirectional heartbeat from the core (client) to the engine (server). The
+// engine's heartbeat watchdog refreshes its last-heartbeat timestamp on receipt;
+// if no KeepAlive arrives within the timeout bound (default 15s) the engine
+// self-cleans (teardown) and self-exits (P2 bounded retention — oneshot only).
+// The `monotonic_tick` is the core-side send sequence (diagnostic/correlation;
+// mirrors the LeaseKeepalive idiom).
+message KeepAliveRequest {
+  uint64 monotonic_tick = 1;  // core-side heartbeat sequence (diagnostic)
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// The engine's unary acknowledgment (echoes the core's monotonic tick; the
+// established wire style — LeaseKeepaliveAck carries the same shape). The reply
+// is an acknowledgment only; the engine's liveness is the sole semantic effect.
+message KeepAliveReply {
+  uint64 monotonic_tick = 1;  // echoes the request tick
+  reserved 9000 to 9999;
+  reserved 1000 to 1999;
+}
+
+// ---------------------------------------------------------------------------
+// ServiceManage (S3/Tier 2: running-service self-service; only `query` lands)
+// ---------------------------------------------------------------------------
+
+// Request for HelperControl.ServiceManage. Exactly one action; Tier 2 v1 lands
+// only `query` (zero-UAC self-report).
+message ServiceManageRequest {
+  oneof action {
+    ServiceSelfQuery query = 1;   // read: engine-internal deep self-report
+  }
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Query the engine's internal deep self-report (no fields; the reply IS the report).
+message ServiceSelfQuery {
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// Reply to HelperControl.ServiceManage. `self_report` carries the engine's
+// internal self-description when the query succeeds; RPC failures surface as
+// tonic Status (unauthenticated / unavailable), not as a failed branch.
+message ServiceManageReply {
+  ServiceSelfReport self_report = 1;
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}
+
+// The engine's internal deep self-report — facts ONLY the engine knows that the
+// host cannot observe from SCM alone. Health/display input only — NEVER
+// authorization material (peer identity stays transport-derived + PSK).
+message ServiceSelfReport {
+  bool control_plane_ready = 1;  // engine control plane is serving (service: accept-loop created pipe + ServiceMain reported Running)
+  bool psk_present = 2;          // service-mode PSK loaded at startup (fail-closed: absent = engine refused to start)
+  string connection_mode = 3;    // "service" | "oneshot" (engine-authoritative)
+  bytes runtime_epoch = 4;       // 16 bytes; identity of this engine instance
+  AuthorityFence authority_fence = 5;  // current fence (epoch / instance / watermark / revision)
+  reserved 1000 to 1999;
+  reserved 9000 to 9999;
+}

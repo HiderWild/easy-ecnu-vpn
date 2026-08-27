@@ -1,0 +1,7 @@
+# Temporary build-environment workaround (P1-c session): force the MSVC linker's
+# temp files into a writable directory (C: is near-full and C:\WINDOWS is not
+# writable by this user, so link.exe otherwise fails with LNK1104). Remove this
+# file once the environment is fixed.
+[env]
+TMP = "C:\\Users\\TomLi\\AppData\\Local\\Temp\\exv-tmp"
+TEMP = "C:\\Users\\TomLi\\AppData\\Local\\Temp\\exv-tmp"

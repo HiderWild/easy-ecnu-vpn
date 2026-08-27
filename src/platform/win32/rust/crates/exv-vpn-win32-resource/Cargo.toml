@@ -1,0 +1,49 @@
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
+
+[package]
+name = "exv-vpn-win32-resource"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+exv-vpn-cstp = { workspace = true }
+exv-vpn-domain = { workspace = true }
+exv-vpn-resource = { workspace = true }
+exv-vpn-data-plane = { workspace = true }
+exv-vpn-wire = { workspace = true }
+bytes = { workspace = true }
+# VGDC 双线直连 DNS（C4 提升）：DoH 走 proxy-safe TLS（rustls + platform-verifier），
+# 版本与 Common exv-vpn-cstp 冻结一致。
+rustls = { version = "0.23.43", default-features = false, features = ["std", "tls12", "ring"] }
+rustls-platform-verifier = "0.7.0"
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+tokio = { workspace = true }
+tokio-rustls = { version = "0.26.4", default-features = false, features = ["logging", "tls12", "ring"] }
+tracing = { workspace = true }
+uuid = { workspace = true }
+# 系统代理感知（T1）/ 豁免合并写入（T2）：注册表（HKU Internet Settings）+ WinINET 广播。
+windows = { workspace = true, features = [
+    "Win32_System_Registry",
+    "Win32_Networking_WinInet",
+] }
+
+[dev-dependencies]
+exv-vpn-testkit = { workspace = true }
+proptest = { workspace = true }
+
+[features]
+# R0 计时埋点（默认关闭零开销）：逐 Win32 API 级分段耗时写 EXV_TIMING_FILE / %TEMP%
+# exv-timing-<pid>.log。开启：cargo build/test -p exv-vpn-win32-resource --features timing
+# （acceptance 的 timing feature 会透传本 feature）。
+timing = []
+
+[lints]
+workspace = true
+
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。

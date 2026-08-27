@@ -1,0 +1,63 @@
+{
+  "manifest": {
+    "schema_version": "1.0",
+    "requirement_id": "example-network-coexistence",
+    "top_level_spec_path": "docs/superpowers/specs/example-network.md",
+    "common_architecture_spec_path": "docs/superpowers/specs/example-architecture.md",
+    "common_plan_path": "docs/superpowers/plans/common/example-network.md",
+    "common_branch": "codex/common-example-network",
+    "accepted_common_implementation_commit": "__COMMON_IMPLEMENTATION_COMMIT__",
+    "baseline_record_mode": "metadata_only_following_implementation",
+    "platform_lanes": [
+      {
+        "platform": "windows",
+        "disposition": "implement",
+        "rationale": "Native networking requires the approved adapter.",
+        "planned_branch": "codex/windows-example-network",
+        "planned_plan_path": "docs/superpowers/platforms/windows/example-network/implementation-plan.md",
+        "planned_lane_record_path": "docs/superpowers/platforms/windows/example-network-coexistence/lane-record.json",
+        "required_production_verifications": [
+          {
+            "id": "PV-01",
+            "requires_real_machine": true
+          }
+        ],
+        "allowed_path_prefixes": [
+          {
+            "template_id": "platform_source",
+            "prefix": "src/platform/windows/"
+          },
+          {
+            "template_id": "platform_plan_status_and_evidence",
+            "prefix": "docs/superpowers/platforms/windows/"
+          }
+        ]
+      }
+    ]
+  },
+  "lane_record": {
+    "schema_version": "1.0",
+    "requirement_id": "example-network-coexistence",
+    "platform": "windows",
+    "lane_branch": "codex/windows-example-network",
+    "accepted_common_implementation_commit": "__COMMON_IMPLEMENTATION_COMMIT__",
+    "common_baseline_record_commit": "__COMMON_BASELINE_RECORD_COMMIT__",
+    "lane_status": "delivered",
+    "delivery_verdict": "deliverable",
+    "unfinished_subrequirements": [],
+    "blockers": [],
+    "production_verifications": [
+      {
+        "id": "PV-01",
+        "status": "passed",
+        "evidence": [
+          {
+            "kind": "real_machine",
+            "path": "evidence/platform/windows/real-machine.json"
+          }
+        ]
+      }
+    ],
+    "skip_mock_items": []
+  }
+}

@@ -1,0 +1,46 @@
+{
+  "schema_version": "2.0",
+  "policy_kind": "common_native_module_checks",
+  "module_profiles": {
+    "common-only": {
+      "build_type": "Release",
+      "host_cmake_definitions": {
+        "darwin": [],
+        "win32": [
+          "EXV_BUILD_WINDOWS_SETUP=OFF"
+        ]
+      },
+      "native_jobs": {
+        "minimum": 1,
+        "maximum": 8
+      },
+      "ctest_parallelism": 1,
+      "module_components": [
+        "generate-contracts-check",
+        "generate-product-semantic-contracts-check",
+        "generate-action-policy-usage-manifest-check",
+        "generate-common-feature-inventory-check",
+        "generate-runtime-contract-identity-check",
+        "common-decoupling"
+      ],
+      "platform_exclusions": {
+        "darwin": [],
+        "win32": [
+          "windows-setup"
+        ]
+      }
+    }
+  },
+  "test_discovery": {
+    "module_labels": [
+      "common-decoupling"
+    ],
+    "empty_result": "local_module_failure"
+  },
+  "timing_policy": {
+    "expected_budget_effect": "telemetry",
+    "hard_timeout_effect": "local_module_failure",
+    "platform_specific_common_budget_override": false,
+    "standardized_performance_lane_may_enforce_expected_budget": true
+  }
+}

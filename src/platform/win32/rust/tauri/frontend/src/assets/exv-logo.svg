@@ -1,0 +1,75 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="1006" height="1108" viewBox="130 88 1006 1108" role="img" aria-label="EXV logo" aria-labelledby="title description">
+  <title id="title">Secure globe and shield icon</title>
+  <desc id="description">A red network globe protected by a shield and checkmark, reconstructed as layered vector paths on a transparent background.</desc>
+  <defs>
+    <linearGradient id="red-face" gradientUnits="userSpaceOnUse" x1="280" y1="155" x2="905" y2="925">
+      <stop offset="0" stop-color="#9A2034"/>
+      <stop offset="1" stop-color="#9A2034"/>
+    </linearGradient>
+    <linearGradient id="red-frame" gradientUnits="userSpaceOnUse" x1="695" y1="570" x2="1030" y2="1095">
+      <stop offset="0" stop-color="#9A2034"/>
+      <stop offset="1" stop-color="#9A2034"/>
+    </linearGradient>
+    <linearGradient id="white-face" gradientUnits="userSpaceOnUse" x1="690" y1="570" x2="1025" y2="1110">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FCFCFC"/>
+    </linearGradient>
+    <linearGradient id="depth" gradientUnits="userSpaceOnUse" x1="430" y1="220" x2="925" y2="1110">
+      <stop offset="0" stop-color="#F4F5F6"/>
+      <stop offset="1" stop-color="#DDE1E5"/>
+    </linearGradient>
+    <clipPath id="globe-face-clip">
+      <circle cx="600" cy="553" r="424"/>
+    </clipPath>
+    <filter id="soft-shadow" x="-25%" y="-25%" width="170%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12" result="blur"/>
+      <feOffset in="blur" dx="8" dy="15" result="offset"/>
+      <feFlood flood-color="#6E7780" flood-opacity="0.24" result="color"/>
+      <feComposite in="color" in2="offset" operator="in" result="shadow"/>
+      <feMerge>
+        <feMergeNode in="shadow"/>
+      </feMerge>
+    </filter>
+    <filter id="shield-shadow" x="-25%" y="-25%" width="170%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="12" result="blur"/>
+      <feOffset in="blur" dx="6" dy="12" result="offset"/>
+      <feFlood flood-color="#68717A" flood-opacity="0.19" result="color"/>
+      <feComposite in="color" in2="offset" operator="in"/>
+    </filter>
+  </defs>
+
+  <g id="shadow">
+    <circle cx="607" cy="570" r="463" fill="#DDE1E5" filter="url(#soft-shadow)"/>
+  </g>
+
+  <g id="globe">
+    <circle id="globe-white-rim" cx="600" cy="553" r="463" fill="#FFFFFF"/>
+    <circle id="globe-red-face" cx="600" cy="553" r="421" fill="url(#red-face)"/>
+    <g id="network-lines" clip-path="url(#globe-face-clip)" fill="none" stroke="#FFFFFF" stroke-width="46" stroke-linecap="round" stroke-linejoin="round">
+      <path id="latitude" d="M130 500 Q225 623 337 682 Q565 766 769 562 Q890 430 950 190"/>
+      <path id="upper-longitude" d="M270 215 Q412 238 494 306 Q652 392 769 562"/>
+      <path id="vertical-longitude" d="M430 1010 Q326 805 337 682 Q351 468 494 306 Q630 155 800 105"/>
+    </g>
+    <circle id="globe-edge-mask" cx="600" cy="553" r="422" fill="none" stroke="#FFFFFF" stroke-width="4"/>
+    <g id="nodes">
+      <circle cx="494" cy="306" r="65" fill="#FFFFFF"/>
+      <circle cx="494" cy="306" r="38" fill="url(#red-face)"/>
+      <circle cx="337" cy="682" r="65" fill="#FFFFFF"/>
+      <circle cx="337" cy="682" r="38" fill="url(#red-face)"/>
+      <circle cx="769" cy="562" r="65" fill="#FFFFFF"/>
+      <circle cx="769" cy="562" r="38" fill="url(#red-face)"/>
+    </g>
+  </g>
+
+  <g id="shield">
+    <path id="shield-cast-shadow" d="M871 512 C879 512 887 516 895 523 C956 568 1028 596 1114 612 C1126 614 1133 624 1133 637 V824 C1133 985 1038 1105 887 1175 C876 1180 867 1180 857 1175 C705 1105 607 987 607 824 V637 C607 624 615 614 627 612 C711 596 786 566 848 523 C855 516 863 512 871 512 Z" fill="#6F7881" filter="url(#shield-shadow)"/>
+    <path id="shield-depth" d="M871 531 C879 531 887 535 895 542 C956 587 1028 615 1114 631 C1126 633 1133 643 1133 656 V843 C1133 1004 1038 1124 887 1194 C876 1199 867 1199 857 1194 C705 1124 607 1006 607 843 V656 C607 643 615 633 627 631 C711 615 786 585 848 542 C855 535 863 531 871 531 Z" fill="url(#depth)"/>
+    <path id="shield-white-face" d="M871 512 C879 512 887 516 895 523 C956 568 1028 596 1114 612 C1126 614 1133 624 1133 637 V824 C1133 985 1038 1105 887 1175 C876 1180 867 1180 857 1175 C705 1105 607 987 607 824 V637 C607 624 615 614 627 612 C711 596 786 566 848 523 C855 516 863 512 871 512 Z" fill="url(#white-face)"/>
+    <path id="shield-red-frame" fill="url(#red-frame)" fill-rule="evenodd" d="M871 552 C936 600 1004 628 1092 646 V818 C1092 957 1011 1063 871 1138 C731 1063 649 957 649 818 V646 C737 628 805 600 871 552 Z M871 607 C925 645 980 669 1049 684 V817 C1049 924 990 1006 871 1071 C752 1006 693 924 693 817 V684 C762 669 817 645 871 607 Z"/>
+  </g>
+
+  <g id="checkmark">
+    <path d="M772 853 L839 919 L982 765" fill="none" stroke="url(#red-frame)" stroke-width="58" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+</svg>

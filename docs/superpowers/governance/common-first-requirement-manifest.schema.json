@@ -1,0 +1,341 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "common-first-requirement-manifest.schema.json",
+  "$comment": "仅供历史展示；不参与当前宿主开发或验收判定。allowed_path_prefixes 字段不授权也不禁止当前宿主直接修补 Common。",
+  "title": "Common-first requirement manifest",
+  "description": "历史 Common-first requirement manifest 的结构读取定义。全文件仅作历史展示；字段间不推导身份、生命周期或交付结论，其中 allowed_path_prefixes 字段不授权也不禁止当前宿主直接修补 Common，当前修补依据真实业务流观察。",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "requirement_id",
+    "top_level_spec_path",
+    "common_architecture_spec_path",
+    "common_plan_path",
+    "common_branch",
+    "accepted_common_implementation_commit",
+    "baseline_record_mode",
+    "platform_lanes"
+  ],
+  "properties": {
+    "schema_version": {
+      "enum": [
+        "1.0",
+        "1.1"
+      ]
+    },
+    "requirement_id": {
+      "description": "Stable, platform-neutral requirement identifier.",
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "top_level_spec_path": {
+      "$ref": "#/$defs/repository_markdown_path"
+    },
+    "common_architecture_spec_path": {
+      "$ref": "#/$defs/repository_markdown_path"
+    },
+    "common_plan_path": {
+      "$ref": "#/$defs/repository_markdown_path"
+    },
+    "common_branch": {
+      "description": "历史记录中的 Common branch 字符串；不据此推导当前身份或权威。",
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "accepted_common_implementation_commit": {
+      "description": "历史记录中的 Common implementation commit 字符串；只保留完整 SHA 形状。",
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "baseline_record_mode": {
+      "description": "历史 two-commit 记录模式字面量；不构成当前交付凭证。",
+      "const": "metadata_only_following_implementation"
+    },
+    "platform_lanes": {
+      "description": "历史平台 lane 形状；各字段彼此不构成交付凭证，也不推导当前分支、身份或生命周期。",
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "$ref": "#/$defs/platform_lane"
+      }
+    },
+    "common_native_acceptance": {
+      "description": "1.1 历史清单中的双原生主机证据包字段形状；不据路径目录名推导 requirement 身份或当前验收结论。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "bundle_path",
+        "bundle_sha256"
+      ],
+      "properties": {
+        "mode": {
+          "const": "dual_host_attestation_bundle"
+        },
+        "bundle_path": {
+          "$ref": "#/$defs/common_native_bundle_path"
+        },
+        "bundle_sha256": {
+          "type": "string",
+          "pattern": "^sha256:[0-9a-f]{64}$"
+        }
+      }
+    },
+    "supersedes": {
+      "description": "历史 supersedes 对象形状；requirement_id 与 manifest_path 分别校验，不要求彼此身份相等。",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requirement_id",
+        "manifest_path"
+      ],
+      "properties": {
+        "requirement_id": {
+          "$ref": "#/$defs/requirement_id"
+        },
+        "manifest_path": {
+          "$ref": "#/$defs/manifest_path"
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.0"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "not": {
+          "required": [
+            "common_native_acceptance"
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "schema_version": {
+            "const": "1.1"
+          }
+        },
+        "required": [
+          "schema_version"
+        ]
+      },
+      "then": {
+        "required": [
+          "common_native_acceptance"
+        ]
+      }
+    }
+  ],
+  "$defs": {
+    "requirement_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?$"
+    },
+    "repository_path": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?![A-Za-z]:)(?!.*[\\r\\n])(?!.*\\\\)(?!.*(?:^|/)\\.{1,2}(?:/|$))[A-Za-z0-9._][A-Za-z0-9._-]*(?:/[A-Za-z0-9._][A-Za-z0-9._-]*)*/?$"
+    },
+    "repository_markdown_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "\\.md$"
+        }
+      ]
+    },
+    "repository_json_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "\\.json$"
+        }
+      ]
+    },
+    "manifest_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_json_path"
+        },
+        {
+          "pattern": "^docs/superpowers/requirements/[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?/common-first-manifest\\.json$"
+        }
+      ]
+    },
+    "common_native_bundle_path": {
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_json_path"
+        },
+        {
+          "pattern": "^docs/superpowers/evidence/common-native-acceptance/[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?/bundle\\.json$"
+        }
+      ]
+    },
+    "path_prefix": {
+      "description": "Repository-relative directory prefix. It must end in `/`, matching the directory-prefix representation in common-first-protected-paths.json.",
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_path"
+        },
+        {
+          "pattern": "/$"
+        }
+      ]
+    },
+    "planned_branch": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^[A-Za-z0-9][A-Za-z0-9._/-]*$"
+    },
+    "platform_managed_markdown_path": {
+      "description": "历史平台计划路径的基本 canonical 形状；目录名不与 lane platform 做身份绑定。",
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_markdown_path"
+        },
+        {
+          "pattern": "^docs/superpowers/platforms/[a-z][a-z0-9-]*/[A-Za-z0-9][A-Za-z0-9._/-]*\\.md$"
+        }
+      ]
+    },
+    "platform_lane_record_path": {
+      "description": "历史 lane record 路径的基本 canonical 形状；目录名不与当前 lane 或 requirement 做身份绑定。",
+      "allOf": [
+        {
+          "$ref": "#/$defs/repository_json_path"
+        },
+        {
+          "pattern": "^docs/superpowers/platforms/[a-z][a-z0-9-]*/[a-z0-9]+(?:[a-z0-9-]*[a-z0-9])?/lane-record\\.json$"
+        }
+      ]
+    },
+    "platform_lane": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "disposition",
+        "rationale",
+        "planned_branch",
+        "planned_plan_path",
+        "planned_lane_record_path",
+        "required_production_verifications",
+        "allowed_path_prefixes"
+      ],
+      "properties": {
+        "platform": {
+          "description": "Lowercase platform lane name (for example windows, darwin, or linux).",
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "disposition": {
+          "enum": [
+            "implement",
+            "verify_only",
+            "not_applicable"
+          ]
+        },
+        "rationale": {
+          "description": "历史 rationale 非空文本；不作为当前批准或归属结论。",
+          "type": "string",
+          "minLength": 1
+        },
+        "planned_branch": {
+          "oneOf": [
+            {
+              "$ref": "#/$defs/planned_branch"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planned_plan_path": {
+          "description": "历史平台计划路径；只检查安全与基本 canonical 形状，不与其他字段做身份相等推导。",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/platform_managed_markdown_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "planned_lane_record_path": {
+          "description": "历史 planned lane record 路径；只检查安全与基本 canonical 形状，不构成当前机器权威。",
+          "oneOf": [
+            {
+              "$ref": "#/$defs/platform_lane_record_path"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "required_production_verifications": {
+          "description": "历史 production-verification 条目形状；只检查 ID、布尔字段和列表唯一性，不与 branch 或 disposition 推导交付结论。",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "requires_real_machine"
+            ],
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^PV-[A-Z0-9]+(?:-[A-Z0-9]+)*$"
+              },
+              "requires_real_machine": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "allowed_path_prefixes": {
+          "description": "历史展示字段。条目只保留非空 template_id、对象形状和仓库相对目录前缀语法；不授权也不禁止当前宿主修补。",
+          "type": "array",
+          "uniqueItems": true,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "template_id",
+              "prefix"
+            ],
+            "properties": {
+              "template_id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "prefix": {
+                "$ref": "#/$defs/path_prefix"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

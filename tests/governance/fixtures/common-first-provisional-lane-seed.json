@@ -1,0 +1,38 @@
+{
+  "schema_version": "1.1",
+  "requirement_id": "vpn-win32-product-artifact-boundary-saturation-closure",
+  "platform": "win32",
+  "candidate_common_commit": "1111111111111111111111111111111111111111",
+  "candidate_non_evidence_tree_digest": "sha256:2222222222222222222222222222222222222222222222222222222222222222",
+  "planned_manifest_path": "docs/superpowers/requirements/vpn-win32-product-artifact-boundary-saturation-closure/common-first-manifest.json",
+  "provisional_branch": "codex/req-vpn-win32-product-artifact-boundary-saturation-closure-win32-provisional",
+  "status": "in_progress",
+  "delivery_verdict": "not_deliverable",
+  "allowed_paths": [
+    {
+      "template_id": "platform_build_fragment",
+      "path": "cmake/platform/win32/product-artifacts.cmake"
+    }
+  ],
+  "allowed_path_prefixes": [
+    {
+      "template_id": "platform_source",
+      "prefix": "src/platform/win32/"
+    },
+    {
+      "template_id": "platform_tests",
+      "prefix": "tests/platform/win32/"
+    },
+    {
+      "template_id": "platform_plan_status_and_evidence",
+      "prefix": "docs/superpowers/platforms/win32/"
+    }
+  ],
+  "unfinished_subrequirements": [
+    "setup-resource-contract",
+    "target-manifest-ownership",
+    "exvp-in-memory-adaptive-packaging"
+  ],
+  "blockers": [],
+  "expires_on_manifest_creation": true
+}

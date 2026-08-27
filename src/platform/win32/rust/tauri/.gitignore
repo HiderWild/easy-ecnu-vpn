@@ -1,0 +1,9 @@
+# Rust build output（独立 workspace 的 target/，不进入核心 runtime target 树）
+target/
+
+# 前端构建产物与依赖
+node_modules/
+frontend/dist/
+
+# Tauri 生成物
+app/gen/

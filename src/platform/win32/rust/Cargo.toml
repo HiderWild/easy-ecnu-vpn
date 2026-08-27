@@ -1,0 +1,77 @@
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
+
+[workspace]
+resolver = "3"
+members = ["crates/*"]
+
+[workspace.package]
+edition = "2024"
+rust-version = "1.96"
+license = "Proprietary"
+
+[workspace.dependencies]
+# Common (cross-platform) crates, referenced by relative path.
+exv-vpn-domain = { path = "../../../common/rust/crates/exv-vpn-domain" }
+exv-vpn-resource = { path = "../../../common/rust/crates/exv-vpn-resource" }
+exv-vpn-data-plane = { path = "../../../common/rust/crates/exv-vpn-data-plane" }
+exv-vpn-wire = { path = "../../../common/rust/crates/exv-vpn-wire" }
+exv-vpn-local-rpc = { path = "../../../common/rust/crates/exv-vpn-local-rpc" }
+exv-vpn-cstp = { path = "../../../common/rust/crates/exv-vpn-cstp" }
+exv-vpn-runtime = { path = "../../../common/rust/crates/exv-vpn-runtime" }
+exv-vpn-host = { path = "../../../common/rust/crates/exv-vpn-host" }
+exv-vpn-helper = { path = "../../../common/rust/crates/exv-vpn-helper" }
+exv-vpn-testkit = { path = "../../../common/rust/crates/exv-vpn-testkit" }
+exv-vpn-acceptance = { path = "../../../common/rust/crates/exv-vpn-acceptance" }
+
+# Win32 platform crates (workspace members referenced by each other).
+exv-vpn-win32-config = { path = "crates/exv-vpn-win32-config" }
+exv-vpn-win32-ipc = { path = "crates/exv-vpn-win32-ipc" }
+exv-vpn-win32-resource = { path = "crates/exv-vpn-win32-resource" }
+exv-engine = { path = "crates/exv-vpn-win32-engine" }
+exv-core = { path = "crates/exv-vpn-win32-host" }
+
+# Win32 phase: Microsoft `windows` (frozen feature set from plan §2).
+windows = { version = "0.62.2", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_Ndis",
+    "Win32_Networking_WinSock",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_IO",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+# Common dependency versions (mirrored from the root workspace Cargo.toml).
+aes-gcm = "0.10.3"
+base64 = "0.22.1"
+bytes = "1.12.1"
+getrandom = { version = "0.3.4", features = ["std"] }
+prost = "0.14.4"
+proptest = "1.11.0"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+sha2 = "0.11.0"
+tempfile = "3.27.0"
+tokio = { version = "1.53.1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "test-util", "time"] }
+tonic = { version = "0.14.6", default-features = false, features = ["codegen", "router", "transport"] }
+tracing = "0.1.44"
+uuid = { version = "1.24.0", features = ["serde", "v4"] }
+zeroize = { version = "1.9.0", features = ["zeroize_derive"] }
+
+[workspace.lints.rust]
+# The platform uses reviewed unsafe with SAFETY comments; do not forbid unsafe.
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = { level = "deny", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+dbg_macro = "deny"
+todo = "deny"
+
+# EXV_CUTOVER（2026-08-17）：Rust 为正式活动产品线；C++ 已弃用、仅作参考。
+# cutover 记录：docs/superpowers/evidence/2026-08-17-rust-native-product-line-cutover.md；重新接线须另立 cutover requirement 并重跑真实业务流——该条件已由 2026-08-17 cutover 满足。
